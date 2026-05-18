@@ -381,19 +381,9 @@ fn validate_json_schema_children(
     value: &Value,
     path: &str,
 ) -> Result<(), String> {
-    if let Some(items_schema) = schema.get("items") {
-        if let Some(items) = value.as_array() {
-            for (index, item) in items.iter().enumerate() {
-                validate_json_schema_value(
-                    root_schema,
-                    items_schema,
-                    item,
-                    &format!("{path}[{index}]"),
-                )?;
-            }
-        }
-    }
+    let mut prefix_item_count = 0;
     if let Some(prefix_items) = schema.get("prefixItems").and_then(Value::as_array) {
+        prefix_item_count = prefix_items.len();
         if let Some(items) = value.as_array() {
             for (index, item_schema) in prefix_items.iter().enumerate() {
                 let Some(item) = items.get(index) else {
@@ -405,6 +395,24 @@ fn validate_json_schema_children(
                     item,
                     &format!("{path}[{index}]"),
                 )?;
+            }
+        }
+    }
+    if let Some(items_schema) = schema.get("items") {
+        if let Some(items) = value.as_array() {
+            if items_schema == &Value::Bool(false) {
+                if items.len() > prefix_item_count {
+                    return Err(format!("{path}[{prefix_item_count}] is not allowed"));
+                }
+            } else if items_schema != &Value::Bool(true) {
+                for (index, item) in items.iter().enumerate().skip(prefix_item_count) {
+                    validate_json_schema_value(
+                        root_schema,
+                        items_schema,
+                        item,
+                        &format!("{path}[{index}]"),
+                    )?;
+                }
             }
         }
     }
@@ -437,11 +445,9 @@ fn validate_json_schema_children(
 
     match schema.get("additionalProperties") {
         Some(Value::Bool(false)) => {
-            if let Some(properties) = properties {
-                for key in object.keys() {
-                    if !properties.contains_key(key) {
-                        return Err(format!("{path}.{key} is not allowed"));
-                    }
+            for key in object.keys() {
+                if !properties.is_some_and(|properties| properties.contains_key(key)) {
+                    return Err(format!("{path}.{key} is not allowed"));
                 }
             }
         }

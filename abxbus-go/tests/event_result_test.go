@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
-	"github.com/ArchiveBox/abxbus/abxbus-go/jsonschema"
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
+	"github.com/ArchiveBox/abxbus/abxbus-go/v2/jsonschema"
 	"os"
 	"reflect"
 	"strings"
@@ -1036,6 +1036,36 @@ func TestJSONSchemaNullEnumSemanticsSurviveRehydration(t *testing.T) {
 	}
 	if err := jsonschema.Validate(schema, "done"); err == nil {
 		t.Fatal("enum should reject values outside the enum")
+	}
+}
+
+func TestJSONSchemaTuplePrefixItemsOnlyApplyItemsToRemainingValues(t *testing.T) {
+	schema := map[string]any{
+		"type": "array",
+		"prefixItems": []any{
+			map[string]any{"type": "string"},
+			map[string]any{"type": "integer"},
+		},
+		"items": map[string]any{"type": "boolean"},
+	}
+	if err := jsonschema.Validate(schema, []any{"ok", float64(1), true, false}); err != nil {
+		t.Fatalf("tuple prefix plus remaining items should validate: %v", err)
+	}
+	if err := jsonschema.Validate(schema, []any{"ok", float64(1), "not-boolean"}); err == nil {
+		t.Fatal("items should validate only values after prefixItems")
+	}
+	if err := jsonschema.Validate(schema, []any{"ok", "not-integer", true}); err == nil {
+		t.Fatal("prefixItems should still validate tuple-prefix values")
+	}
+}
+
+func TestJSONSchemaObjectWithoutPropertiesRejectsAdditionalProperties(t *testing.T) {
+	schema := map[string]any{"type": "object", "additionalProperties": false}
+	if err := jsonschema.Validate(schema, map[string]any{}); err != nil {
+		t.Fatalf("empty object should validate: %v", err)
+	}
+	if err := jsonschema.Validate(schema, map[string]any{"extra": true}); err == nil {
+		t.Fatal("additionalProperties false should reject keys even without properties")
 	}
 }
 

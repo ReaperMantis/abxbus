@@ -2616,6 +2616,40 @@ mod folded_test_event_result_typed_results {
     }
 
     #[test]
+    fn test_json_schema_tuple_prefix_items_only_apply_items_to_remaining_values() {
+        let schema = json!({
+            "type": "array",
+            "prefixItems": [{"type": "string"}, {"type": "integer"}],
+            "items": {"type": "boolean"}
+        });
+
+        validate_json_schema_value(&schema, &schema, &json!(["ok", 1, true, false]), "$")
+            .expect("tuple prefix plus remaining items should validate");
+        assert!(
+            validate_json_schema_value(&schema, &schema, &json!(["ok", 1, "not-boolean"]), "$")
+                .is_err(),
+            "items should validate only values after prefixItems"
+        );
+        assert!(
+            validate_json_schema_value(&schema, &schema, &json!(["ok", "not-integer", true]), "$")
+                .is_err(),
+            "prefixItems should still validate tuple-prefix values"
+        );
+    }
+
+    #[test]
+    fn test_json_schema_object_without_properties_rejects_additional_properties() {
+        let schema = json!({"type": "object", "additionalProperties": false});
+
+        validate_json_schema_value(&schema, &schema, &json!({}), "$")
+            .expect("empty object should validate");
+        assert!(
+            validate_json_schema_value(&schema, &schema, &json!({"extra": true}), "$").is_err(),
+            "additionalProperties false should reject keys even without properties"
+        );
+    }
+
+    #[test]
     fn test_json_schema_recursive_null_refs_serialize_without_infinite_expansion() {
         let schema = json!({
             "$defs": {

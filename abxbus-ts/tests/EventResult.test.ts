@@ -789,6 +789,25 @@ test('json schema null enum semantics survive rehydration', () => {
   assert.equal(result_type.safeParse('done').success, false)
 })
 
+test('json schema tuple prefix items only apply items to remaining values', () => {
+  const result_type = fromJsonSchema({
+    type: 'array',
+    prefixItems: [{ type: 'string' }, { type: 'integer' }],
+    items: { type: 'boolean' },
+  } as JsonSchema)
+
+  assert.equal(result_type.safeParse(['ok', 1, true, false]).success, true)
+  assert.equal(result_type.safeParse(['ok', 1, 'not-boolean']).success, false)
+  assert.equal(result_type.safeParse(['ok', 'not-integer', true]).success, false)
+})
+
+test('json schema object without properties rejects additional properties', () => {
+  const result_type = fromJsonSchema({ type: 'object', additionalProperties: false } as JsonSchema)
+
+  assert.equal(result_type.safeParse({}).success, true)
+  assert.equal(result_type.safeParse({ extra: true }).success, false)
+})
+
 test('json schema recursive null refs serialize without infinite expansion', () => {
   const Node = z.object({
     name: z.string(),

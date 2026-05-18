@@ -583,22 +583,30 @@ func typeMatches(schemaType any, value any) bool {
 }
 
 func validateChildren(root map[string]any, schema map[string]any, value any, path string) error {
-	if itemsSchema, ok := schema["items"]; ok {
-		if items, ok := value.([]any); ok {
-			for idx, item := range items {
-				if err := validateValue(root, itemsSchema, item, fmt.Sprintf("%s[%d]", path, idx)); err != nil {
-					return err
-				}
-			}
-		}
-	}
+	prefixItemCount := 0
 	if prefixItems, ok := schema["prefixItems"].([]any); ok {
+		prefixItemCount = len(prefixItems)
 		if items, ok := value.([]any); ok {
 			for idx, itemSchema := range prefixItems {
 				if idx >= len(items) {
 					break
 				}
 				if err := validateValue(root, itemSchema, items[idx], fmt.Sprintf("%s[%d]", path, idx)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if itemsSchema, ok := schema["items"]; ok {
+		if items, ok := value.([]any); ok {
+			if allowed, ok := itemsSchema.(bool); ok {
+				if !allowed && len(items) > prefixItemCount {
+					return fmt.Errorf("%s[%d] is not allowed", path, prefixItemCount)
+				}
+				return nil
+			}
+			for idx := prefixItemCount; idx < len(items); idx++ {
+				if err := validateValue(root, itemsSchema, items[idx], fmt.Sprintf("%s[%d]", path, idx)); err != nil {
 					return err
 				}
 			}
@@ -629,7 +637,7 @@ func validateChildren(root map[string]any, schema map[string]any, value any, pat
 	}
 	switch additional := schema["additionalProperties"].(type) {
 	case bool:
-		if !additional && properties != nil {
+		if !additional {
 			for key := range object {
 				if _, known := properties[key]; !known {
 					return fmt.Errorf("%s.%s is not allowed", path, key)

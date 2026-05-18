@@ -253,11 +253,13 @@ def _resolve_json_schema_ref(root_schema: Mapping[str, Any], reference: str) -> 
     return current
 
 
-def _json_schema_number(value: Any) -> float | None:
+def _json_schema_number(value: Any) -> int | float | None:
     if isinstance(value, bool):
         return None
-    if isinstance(value, (int, float)) and math.isfinite(float(value)):
-        return float(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and math.isfinite(value):
+        return value
     return None
 
 
@@ -282,8 +284,13 @@ def _json_schema_type_matches(schema_type: Any, value: Any) -> bool:
     return True
 
 
-def _is_json_schema_multiple_of(number: float, multiple_of: float) -> bool:
-    quotient = number / multiple_of
+def _is_json_schema_multiple_of(number: int | float, multiple_of: int | float) -> bool:
+    if isinstance(number, int) and isinstance(multiple_of, int):
+        return number % multiple_of == 0
+    try:
+        quotient = number / multiple_of
+    except OverflowError:
+        return False
     return abs(quotient - round(quotient)) < 1e-9
 
 
@@ -344,16 +351,21 @@ def _validate_json_schema_scalar_constraints(schema: Mapping[str, Any], value: A
 def _validate_json_schema_children(root_schema: Mapping[str, Any], schema: Mapping[str, Any], value: Any, path: str) -> None:
     if isinstance(value, list):
         value_items = cast(list[Any], value)
-        items_schema = schema.get('items')
-        if items_schema is not None:
-            for index, item in enumerate(value_items):
-                _validate_json_schema_value(root_schema, items_schema, item, f'{path}[{index}]')
         prefix_items = _as_non_string_sequence(schema.get('prefixItems'))
+        prefix_item_count = 0
         if prefix_items is not None:
+            prefix_item_count = len(prefix_items)
             for index, item_schema in enumerate(prefix_items):
                 if index >= len(value_items):
                     break
                 _validate_json_schema_value(root_schema, item_schema, value_items[index], f'{path}[{index}]')
+        items_schema = schema.get('items')
+        if items_schema is False:
+            if len(value_items) > prefix_item_count:
+                raise ValueError(f'{path}[{prefix_item_count}] is not allowed')
+        elif items_schema is not None and items_schema is not True:
+            for index in range(prefix_item_count, len(value_items)):
+                _validate_json_schema_value(root_schema, items_schema, value_items[index], f'{path}[{index}]')
 
     value_mapping = _as_string_key_dict(cast(object, value))
     if value_mapping is None:
@@ -373,10 +385,10 @@ def _validate_json_schema_children(root_schema: Mapping[str, Any], schema: Mappi
 
     additional_properties = schema.get('additionalProperties')
     if additional_properties is False:
-        if properties is not None:
-            for key in value_mapping:
-                if key not in properties:
-                    raise ValueError(f'{path}.{key} is not allowed')
+        allowed_properties = properties or {}
+        for key in value_mapping:
+            if key not in allowed_properties:
+                raise ValueError(f'{path}.{key} is not allowed')
     elif isinstance(additional_properties, Mapping):
         for key, item in value_mapping.items():
             if properties is not None and key in properties:
@@ -385,6 +397,11 @@ def _validate_json_schema_children(root_schema: Mapping[str, Any], schema: Mappi
 
 
 def _validate_json_schema_value(root_schema: Mapping[str, Any], schema_raw: Any, value: Any, path: str) -> None:
+    if schema_raw is False:
+        raise ValueError(f'{path} matched false schema')
+    if schema_raw is True:
+        return
+
     schema = normalize_result_dict(schema_raw)
     if not schema:
         return

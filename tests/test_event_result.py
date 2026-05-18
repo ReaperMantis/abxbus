@@ -19,6 +19,7 @@ from abxbus.jsonschema import (
     normalize_json_schema,
     pydantic_model_from_json_schema,
     pydantic_model_to_json_schema,
+    validate_json_schema_value,
     validate_result_against_type,
 )
 
@@ -867,6 +868,36 @@ def test_json_schema_null_enum_semantics_survive_rehydration():
     assert validate_result_against_type(result_type, None) is None
     with pytest.raises(Exception):
         validate_result_against_type(result_type, 'done')
+
+
+def test_json_schema_tuple_prefix_items_only_apply_items_to_remaining_values():
+    json_schema: dict[str, Any] = {
+        'type': 'array',
+        'prefixItems': [{'type': 'string'}, {'type': 'integer'}],
+        'items': {'type': 'boolean'},
+    }
+
+    assert validate_json_schema_value(json_schema, ['ok', 1, True, False]) == ['ok', 1, True, False]
+    with pytest.raises(Exception):
+        validate_json_schema_value(json_schema, ['ok', 1, 'not-boolean'])
+    with pytest.raises(Exception):
+        validate_json_schema_value(json_schema, ['ok', 'not-integer', True])
+
+
+def test_json_schema_object_without_properties_rejects_additional_properties():
+    json_schema: dict[str, Any] = {'type': 'object', 'additionalProperties': False}
+
+    assert validate_json_schema_value(json_schema, {}) == {}
+    with pytest.raises(Exception):
+        validate_json_schema_value(json_schema, {'extra': True})
+
+
+def test_json_schema_large_integer_does_not_overflow_number_validation():
+    huge_integer = 10**1000
+
+    assert validate_json_schema_value({'type': 'integer'}, huge_integer) == huge_integer
+    with pytest.raises(Exception):
+        validate_json_schema_value({'type': 'number', 'maximum': 10}, huge_integer)
 
 
 def test_json_schema_recursive_null_refs_serialize_without_infinite_expansion():
