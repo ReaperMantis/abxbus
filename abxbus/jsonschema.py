@@ -465,7 +465,7 @@ def _json_schema_validator_type(schema: Mapping[str, Any]) -> Any:
         _validate_json_schema_value(normalized_schema, normalized_schema, value, '$')
         return value
 
-    return Annotated[Any, PlainValidator(_validate)]
+    return Annotated[object, PlainValidator(_validate)]
 
 
 def _prepare_json_schema_for_pydantic_rehydration(schema: dict[str, Any]) -> dict[str, Any]:
@@ -508,7 +508,15 @@ def _json_schema_primitive_type_with_constraints(schema: dict[str, Any], primiti
         if key in {'ge', 'le', 'gt', 'lt', 'min_length', 'max_length', 'multiple_of', 'pattern'}
     }
     if field_params:
-        return Annotated[primitive_type, Field(**field_params)]
+        field = Field(**field_params)
+        if primitive_type is str:
+            return Annotated[str, field]
+        if primitive_type is int:
+            return Annotated[int, field]
+        if primitive_type is float:
+            return Annotated[float, field]
+        if primitive_type is bool:
+            return Annotated[bool, field]
     return primitive_type
 
 
