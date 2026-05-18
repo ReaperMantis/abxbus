@@ -2,7 +2,7 @@ import inspect
 import math
 import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import Any, ForwardRef, Literal, TypeAlias, cast
+from typing import Any, ForwardRef, Literal, Protocol, TypeAlias, cast
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, create_model
 from typing_extensions import Annotated
@@ -48,6 +48,10 @@ JSON_SCHEMA_DRAFT = 'https://json-schema.org/draft/2020-12/schema'
 _TYPE_ADAPTER_CACHE: dict[Any, TypeAdapter[Any]] = {}
 
 FieldDefinition: TypeAlias = Any | tuple[Any, Any]
+
+
+class _RuntimeAnnotated(Protocol):
+    def __getitem__(self, params: tuple[object, ...]) -> object: ...
 
 
 def _get_cached_type_adapter(result_type: Any) -> TypeAdapter[Any]:
@@ -466,7 +470,8 @@ def _json_schema_validator_type(schema: Mapping[str, Any], resolved_type: Any) -
         _validate_json_schema_value(normalized_schema, normalized_schema, value, '$')
         return value
 
-    return Annotated.__getitem__((resolved_type, BeforeValidator(_validate)))
+    runtime_annotated = cast(_RuntimeAnnotated, Annotated)
+    return runtime_annotated[(resolved_type, BeforeValidator(_validate))]
 
 
 def _prepare_json_schema_for_pydantic_rehydration(schema: dict[str, Any]) -> dict[str, Any]:
