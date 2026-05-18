@@ -729,7 +729,9 @@ def pydantic_model_from_json_schema(result_type: Any) -> Any:
 
         primitive_type = _json_schema_primitive_type(schema)
         if primitive_type is not None:
-            resolved_type = _nullable_type(_json_schema_primitive_type_with_constraints(schema, primitive_type), nullable=allows_null)
+            resolved_type = _nullable_type(
+                _json_schema_primitive_type_with_constraints(schema, primitive_type), nullable=allows_null
+            )
             return _wrap_schema_validation(schema, resolved_type)
 
         any_of_candidates = _as_non_string_sequence(schema.get('anyOf'))
