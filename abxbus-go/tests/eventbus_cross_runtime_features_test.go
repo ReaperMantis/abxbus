@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	abxbus "github.com/ArchiveBox/abxbus/v2/abxbus-go"
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
 )
 
 func testFloat64Ptr(value float64) *float64 { return &value }

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/ArchiveBox/abxbus/abxbus-go/v2/jsonschema"
+	"github.com/ArchiveBox/abxbus/abxbus-go/jsonschema"
 )
 
 func Event[T any](payload T) (*BaseEvent, error) {
