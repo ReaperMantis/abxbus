@@ -1719,7 +1719,7 @@ fn test_event_model_fields_preserve_typed_defaults_and_schema() {
     let fields = ModelFieldsDefaultEvent.model_fields();
     assert_i32(fields.some_field.Default);
     assert_eq!(fields.some_field.Default, 2);
-    assert_eq!(fields.some_field.Type.JSONSchema["type"], json!("integer"));
+    assert_eq!(fields.some_field.Type["type"], json!("integer"));
     assert_eq!(ModelFieldsDefaultEvent::default().some_field, 2);
 }
 
