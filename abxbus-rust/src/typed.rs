@@ -182,9 +182,9 @@ pub struct TypeSchema<T> {
 }
 
 impl<T> TypeSchema<T> {
-    pub fn new(JSONSchema: Value) -> Self {
+    pub fn new(json_schema: Value) -> Self {
         Self {
-            JSONSchema,
+            JSONSchema: json_schema,
             _marker: PhantomData,
         }
     }
@@ -222,11 +222,11 @@ pub struct ModelField<T, D = ()> {
 }
 
 impl<T: 'static, D> ModelField<T, D> {
-    pub fn new(name: &'static str, Default: D) -> Self {
+    pub fn new(name: &'static str, default: D) -> Self {
         Self {
             name,
             Type: TypeSchema::new(json_schema_for_type::<T>()),
-            Default,
+            Default: default,
             _marker: PhantomData,
         }
     }
@@ -245,8 +245,6 @@ where
         }
     }
 }
-
-impl<T, D> Copy for ModelField<T, D> where D: Copy {}
 
 impl<T, D> fmt::Debug for ModelField<T, D>
 where
@@ -1431,7 +1429,7 @@ macro_rules! _inner_event_parse {
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
         event_result_schema[$($event_result_schema:tt)*]
     ) => {
-        #[derive(Clone, Default, $crate::serde::Serialize, $crate::serde::Deserialize)]
+        #[derive(Clone, $crate::serde::Serialize, $crate::serde::Deserialize)]
         $($attr)*
         $vis struct $name {
             $($payload)*
@@ -1479,11 +1477,75 @@ macro_rules! _inner_event_parse {
             pub event_results: $crate::typed::Live<std::collections::HashMap<String, $crate::event_result::EventResult>>,
         }
 
+        impl Default for $name {
+            fn default() -> Self {
+                Self {
+                    $($defaults)*
+                    event_type: String::new(),
+                    event_version: String::new(),
+                    event_timeout: None,
+                    event_slow_timeout: None,
+                    event_concurrency: None,
+                    event_handler_timeout: None,
+                    event_handler_slow_timeout: None,
+                    event_handler_concurrency: None,
+                    event_handler_completion: None,
+                    event_blocks_parent_completion: false,
+                    event_result_type: None,
+                    event_id: String::new(),
+                    event_path: Default::default(),
+                    event_parent_id: None,
+                    event_emitted_by_handler_id: None,
+                    event_pending_bus_count: Default::default(),
+                    event_created_at: String::new(),
+                    event_status: Default::default(),
+                    event_started_at: Default::default(),
+                    event_completed_at: Default::default(),
+                    event_results: Default::default(),
+                }
+            }
+        }
+
         #[allow(non_upper_case_globals)]
         $vis const $name: $crate::typed::EventType<$name> = $crate::typed::EventType::new();
 
-        $crate::_inner_event_model_fields! {
-            $vis $name { $($payload)* }
+        $crate::paste::paste! {
+            #[derive(Clone, Debug, PartialEq)]
+            $vis struct [<$name ModelFields>] {
+                $($model_fields)*
+                pub event_type: $crate::typed::ModelField<String, String>,
+                pub event_version: $crate::typed::ModelField<String, String>,
+                pub event_timeout: $crate::typed::ModelField<Option<f64>, Option<f64>>,
+                pub event_slow_timeout: $crate::typed::ModelField<Option<f64>, Option<f64>>,
+                pub event_concurrency: $crate::typed::ModelField<Option<$crate::types::EventConcurrencyMode>, Option<$crate::types::EventConcurrencyMode>>,
+                pub event_handler_timeout: $crate::typed::ModelField<Option<f64>, Option<f64>>,
+                pub event_handler_slow_timeout: $crate::typed::ModelField<Option<f64>, Option<f64>>,
+                pub event_handler_concurrency: $crate::typed::ModelField<Option<$crate::types::EventHandlerConcurrencyMode>, Option<$crate::types::EventHandlerConcurrencyMode>>,
+                pub event_handler_completion: $crate::typed::ModelField<Option<$crate::types::EventHandlerCompletionMode>, Option<$crate::types::EventHandlerCompletionMode>>,
+                pub event_blocks_parent_completion: $crate::typed::ModelField<bool, bool>,
+                pub event_result_type: $crate::typed::ModelField<<$name as $crate::typed::EventSpec>::event_result_type, Option<$crate::serde_json::Value>>,
+            }
+
+            impl $crate::typed::EventModelFields for $name {
+                type ModelFields = [<$name ModelFields>];
+
+                fn model_fields() -> Self::ModelFields {
+                    [<$name ModelFields>] {
+                        $($default_methods)*
+                        event_type: $crate::typed::ModelField::new("event_type", <$name as $crate::typed::EventSpec>::event_type.to_string()),
+                        event_version: $crate::typed::ModelField::new("event_version", <$name as $crate::typed::EventSpec>::event_version.to_string()),
+                        event_timeout: $crate::typed::ModelField::new("event_timeout", <$name as $crate::typed::EventSpec>::event_timeout),
+                        event_slow_timeout: $crate::typed::ModelField::new("event_slow_timeout", <$name as $crate::typed::EventSpec>::event_slow_timeout),
+                        event_concurrency: $crate::typed::ModelField::new("event_concurrency", <$name as $crate::typed::EventSpec>::event_concurrency),
+                        event_handler_timeout: $crate::typed::ModelField::new("event_handler_timeout", <$name as $crate::typed::EventSpec>::event_handler_timeout),
+                        event_handler_slow_timeout: $crate::typed::ModelField::new("event_handler_slow_timeout", <$name as $crate::typed::EventSpec>::event_handler_slow_timeout),
+                        event_handler_concurrency: $crate::typed::ModelField::new("event_handler_concurrency", <$name as $crate::typed::EventSpec>::event_handler_concurrency),
+                        event_handler_completion: $crate::typed::ModelField::new("event_handler_completion", <$name as $crate::typed::EventSpec>::event_handler_completion),
+                        event_blocks_parent_completion: $crate::typed::ModelField::new("event_blocks_parent_completion", <$name as $crate::typed::EventSpec>::event_blocks_parent_completion),
+                        event_result_type: $crate::typed::ModelField::new("event_result_type", <$name as $crate::typed::EventSpec>::event_result_type_json()),
+                    }
+                }
+            }
         }
 
         impl std::fmt::Debug for $name {
