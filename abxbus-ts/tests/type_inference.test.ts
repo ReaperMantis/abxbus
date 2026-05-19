@@ -7,7 +7,7 @@ import { BaseEvent } from '../src/BaseEvent.js'
 import { EventBus } from '../src/EventBus.js'
 import { events_suck } from '../src/events_suck.js'
 import type { EventResult } from '../src/EventResult.js'
-import type { EventResultType } from '../src/types.js'
+import type { EventClass, EventResultType } from '../src/types.js'
 
 type IsEqual<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 type Assert<T extends true> = T
@@ -50,6 +50,7 @@ const StaticShortcutEvent = BaseEvent.extend('StaticShortcutEventForInference', 
 })
 const static_schema_default_event = StaticSchemaEvent()
 const static_shortcut_default_event = StaticShortcutEvent()
+const exported_static_schema_event_class: EventClass<InstanceType<typeof StaticSchemaEvent>> = StaticSchemaEvent
 
 type InferableResult = EventResultType<InstanceType<typeof InferableResultEvent>>
 type _assert_inferable_result = Assert<IsEqual<InferableResult, { ok: boolean }>>
@@ -67,6 +68,14 @@ type _assert_static_schema_result_schema = Assert<IsEqual<typeof StaticSchemaEve
 type _assert_static_schema_model_result_schema = Assert<
   IsEqual<typeof StaticSchemaEvent.model_fields.event_result_type, typeof StaticSchemaResult>
 >
+const _exported_event_class_schema: z.ZodTypeAny = exported_static_schema_event_class.event_schema
+const _exported_event_class_model_fields: z.ZodRawShape = exported_static_schema_event_class.model_fields
+const _exported_event_class_type: string | undefined = exported_static_schema_event_class.event_type
+const _exported_event_class_version: string = exported_static_schema_event_class.event_version
+const _exported_event_class_result_schema: z.ZodTypeAny | undefined = exported_static_schema_event_class.event_result_type
+const _exported_event_class_from_json: InstanceType<typeof StaticSchemaEvent> = exported_static_schema_event_class.fromJSON(
+  static_schema_default_event.toJSON()
+)
 type _assert_static_schema_class_model_field = Assert<
   IsEqual<typeof StaticSchemaEvent.class.model_fields.some_field, typeof StaticSchemaField>
 >

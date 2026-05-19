@@ -1,12 +1,11 @@
 import { z } from 'zod'
-import type { BaseEvent } from './BaseEvent.js'
+import type { BaseEvent, EventClass as BaseEventClass } from './BaseEvent.js'
 import { fromJsonSchema, isJsonSchema, type JsonSchema } from './jsonschema.js'
 
 export type EventStatus = 'pending' | 'started' | 'completed'
+export type { EventClass } from './BaseEvent.js'
 
-export type EventClass<T extends BaseEvent = BaseEvent> = { event_type?: string } & (new (...args: any[]) => T)
-
-export type EventPattern<T extends BaseEvent = BaseEvent> = string | EventClass<T>
+export type EventPattern<T extends BaseEvent = BaseEvent> = string | BaseEventClass<T>
 
 export type EventWithResultSchema<TResult> = BaseEvent & { __event_result_type__?: TResult }
 
@@ -75,7 +74,7 @@ export const normalizeEventPattern = (event_pattern: EventPattern | '*'): string
   } catch {
     preview = String(event_pattern).slice(0, 30)
   }
-  throw new Error('bus.on(match_pattern, ...) must be a string event type, "*", or a BaseEvent class, got: ' + preview)
+  throw new Error('bus.on(match_pattern, ...) must be a string event type, "*", or a BaseEvent.extend() event class, got: ' + preview)
 }
 
 export const isZodSchema = (value: unknown): value is z.ZodTypeAny => !!value && typeof (value as z.ZodTypeAny).safeParse === 'function'
