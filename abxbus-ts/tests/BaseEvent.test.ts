@@ -1300,6 +1300,25 @@ test('BaseEvent auto-generates required metadata when partial input fields are u
   assert.match(event.event_created_at, /Z$/)
 })
 
+test('BaseEvent.extend returns a BaseEvent subclass callable with or without new', () => {
+  const MyEvent = BaseEvent.extend('BaseEventSubclassConstructionEvent', {
+    name: z.string(),
+  })
+  const called_event = MyEvent({ name: 'called' })
+  const constructed_event = new MyEvent({ name: 'constructed' })
+
+  assert.equal(Object.getPrototypeOf(MyEvent), BaseEvent)
+  assert.equal(Object.getPrototypeOf(MyEvent.prototype), BaseEvent.prototype)
+  assert.ok(called_event instanceof BaseEvent)
+  assert.ok(called_event instanceof MyEvent)
+  assert.equal(called_event.constructor, MyEvent)
+  assert.equal(called_event.name, 'called')
+  assert.ok(constructed_event instanceof BaseEvent)
+  assert.ok(constructed_event instanceof MyEvent)
+  assert.equal(constructed_event.constructor, MyEvent)
+  assert.equal(constructed_event.name, 'constructed')
+})
+
 test('BaseEvent.extend exposes Zod model_fields and parsed defaults statically', () => {
   const some_field_schema = z.literal('abc').default('abc')
   const length_schema = z.number().default(3)
@@ -1325,14 +1344,6 @@ test('BaseEvent.extend exposes Zod model_fields and parsed defaults statically',
   assert.equal(SchemaEvent.length, 3)
   assert.equal(SchemaEvent.event_timeout, 25)
   assert.equal(SchemaEvent.event_result_type, result_schema)
-  assert.equal(Object.getPrototypeOf(SchemaEvent.prototype), BaseEvent.prototype)
-  assert.ok(schema_event instanceof BaseEvent)
-  assert.ok(schema_event instanceof SchemaEvent)
-  assert.equal(schema_event.constructor, SchemaEvent)
-  const new_schema_event = new SchemaEvent()
-  assert.ok(new_schema_event instanceof BaseEvent)
-  assert.ok(new_schema_event instanceof SchemaEvent)
-  assert.equal(new_schema_event.constructor, SchemaEvent)
   assert.equal(schema_event.some_field, 'abc')
   assert.equal(schema_event.length, 3)
   assert.equal(schema_event.event_timeout, 25)
