@@ -1137,6 +1137,7 @@ class TestRetryApiParity:
         params = inspect.signature(retry).parameters
         assert params['max_attempts'].default == 1
         assert params['timeout'].default is None
+        assert params['slow_timeout'].default is None
 
     async def test_standalone_async_function_without_event_bus(self):
         calls = 0
@@ -1181,6 +1182,23 @@ class TestRetryApiParity:
 
         assert await flaky() == 'ok'
         assert attempt_count == 3
+
+    async def test_slow_timeout_throttles_per_decorated_async_method(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level('WARNING', logger='abxbus.retry')
+
+        @retry(max_attempts=1, slow_timeout=0.01)
+        async def slow(first: str, second: str, *, key: str):
+            await asyncio.sleep(0.03)
+            return 'ok'
+
+        assert await asyncio.gather(
+            slow('abcdef', 'defghi', key='value'),
+            slow('abcdef', 'defghi', key='value'),
+            slow('abcdef', 'defghi', key='value'),
+        ) == ['ok', 'ok', 'ok']
+        messages = [record.getMessage() for record in caplog.records if record.getMessage().startswith('Warning: slow(')]
+        assert len(messages) == 1
+        assert messages[0].startswith('Warning: slow(abc, def, key=val) slow (0.')
 
     async def test_semaphore_name_callable_uses_call_args_for_keying(self):
         active = 0
@@ -1384,6 +1402,20 @@ class TestSyncRetryApiParity:
         with pytest.raises(ValueError, match='not retryable'):
             fn()
         assert calls == 1
+
+    def test_sync_slow_timeout_throttles_per_decorated_method(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level('WARNING', logger='abxbus.retry')
+
+        @retry(max_attempts=1, slow_timeout=0.01)
+        def slow(first: str, second: str, *, key: str):
+            time.sleep(0.03)
+            return 'ok'
+
+        assert slow('abcdef', 'defghi', key='value') == 'ok'
+        assert slow('abcdef', 'defghi', key='value') == 'ok'
+        messages = [record.getMessage() for record in caplog.records if record.getMessage().startswith('Warning: slow(')]
+        assert len(messages) == 1
+        assert messages[0].startswith('Warning: slow(abc, def, key=val) slow (0.')
 
     def test_sync_timeout_triggers_timeout_error_on_slow_attempts(self):
         calls = 0

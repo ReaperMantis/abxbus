@@ -1346,6 +1346,32 @@ test('retry: timed-out attempts are retried when max_attempts > 1', async () => 
   assert.equal(calls, 3)
 })
 
+test('retry: slow_timeout throttles per decorated async method', async () => {
+  const original_warn = console.warn
+  const warnings: string[] = []
+  console.warn = (message?: unknown, ...args: unknown[]) => {
+    warnings.push([message, ...args].map(String).join(' '))
+  }
+  try {
+    const fn = retry({ max_attempts: 1, slow_timeout: 0.01 })(async function slow(first: string, second: string) {
+      await delay(30)
+      return `${first}-${second}`
+    })
+
+    assert.deepEqual(await Promise.all([fn('abcdef', 'defghi'), fn('abcdef', 'defghi'), fn('abcdef', 'defghi')]), [
+      'abcdef-defghi',
+      'abcdef-defghi',
+      'abcdef-defghi',
+    ])
+  } finally {
+    console.warn = original_warn
+  }
+
+  const slow_warnings = warnings.filter((message) => message.startsWith('Warning: slow('))
+  assert.equal(slow_warnings.length, 1)
+  assert.match(slow_warnings[0], /^Warning: slow\(abc, def\) slow \(0\.\d+s\)$/)
+})
+
 // ─── Semaphore concurrency control ──────────────────────────────────────────
 
 test('retry: semaphore_limit controls max concurrent executions', async () => {
@@ -2314,6 +2340,29 @@ test('retry sync: timed-out attempts are retried when max_attempts > 1', () => {
   })
   assert.equal(fn(), 'ok')
   assert.equal(calls, 3)
+})
+
+test('retry sync: slow_timeout throttles per decorated method', () => {
+  const original_warn = console.warn
+  const warnings: string[] = []
+  console.warn = (message?: unknown, ...args: unknown[]) => {
+    warnings.push([message, ...args].map(String).join(' '))
+  }
+  try {
+    const fn = retry({ max_attempts: 1, slow_timeout: 0.01 })(function slow(first: string, second: string) {
+      blockFor(30)
+      return `${first}-${second}`
+    })
+
+    assert.equal(fn('abcdef', 'defghi'), 'abcdef-defghi')
+    assert.equal(fn('abcdef', 'defghi'), 'abcdef-defghi')
+  } finally {
+    console.warn = original_warn
+  }
+
+  const slow_warnings = warnings.filter((message) => message.startsWith('Warning: slow('))
+  assert.equal(slow_warnings.length, 1)
+  assert.match(slow_warnings[0], /^Warning: slow\(abc, def\) slow \(0\.\d+s\)$/)
 })
 
 test('retry sync: semaphore_lax=false throws SemaphoreTimeoutError when slots are full', async () => {

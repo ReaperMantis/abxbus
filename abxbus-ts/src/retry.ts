@@ -21,6 +21,8 @@ type RetryDecorator = {
 
 const MULTIPROCESS_SEMAPHORE_DIRNAME = 'browser_use_semaphores'
 const MULTIPROCESS_STALE_LOCK_MS = 5 * 60 * 1000
+const RETRY_SLOW_WARNING_THROTTLE_MS = 2000
+const RETRY_SLOW_WARNING_ARGS_MAX_LENGTH = 80
 
 let multiprocess_fallback_reason_logged: string | null = null
 
@@ -43,6 +45,9 @@ export interface RetryOptions {
 
   /** Per-attempt timeout in seconds. Default: undefined (no per-attempt timeout) */
   timeout?: number | null
+
+  /** Emit a warning when a decorated call exceeds this many seconds. Default: undefined (disabled) */
+  slow_timeout?: number | null
 
   /** Maximum concurrent executions sharing this semaphore. Default: undefined (no concurrency limit) */
   semaphore_limit?: number | null
@@ -238,6 +243,7 @@ export function retry(options: RetryOptions = {}): RetryDecorator {
     retry_backoff_factor = 1.0,
     retry_on_errors,
     timeout,
+    slow_timeout,
     semaphore_limit,
     semaphore_name: semaphore_name_option,
     semaphore_lax = true,
@@ -245,10 +251,13 @@ export function retry(options: RetryOptions = {}): RetryDecorator {
     semaphore_timeout,
   } = options
 
-  const decorateFunction = <T extends AnyFunction>(target: T, _context?: ClassMethodDecoratorContext): T => {
-    const fn_name = target.name || (_context?.name as string) || 'anonymous'
+  const decorateFunction = <T extends AnyFunction>(target: T, _context?: ClassMethodDecoratorContext, owner_name?: string | null): T => {
+    const base_fn_name = target.name || (_context?.name as string) || 'anonymous'
+    let fn_name = owner_name ? `${owner_name}.${base_fn_name}` : base_fn_name
     const effective_max_attempts = Math.max(1, max_attempts)
     const effective_retry_after = Math.max(0, retry_after)
+    const effective_slow_timeout_ms = slow_timeout != null && slow_timeout > 0 ? slow_timeout * 1000 : null
+    let last_slow_warning_at = 0
 
     const shouldRetry = (error: unknown): boolean => {
       if (!retry_on_errors || retry_on_errors.length === 0) return true
@@ -273,6 +282,14 @@ export function retry(options: RetryOptions = {}): RetryDecorator {
       if (delay_seconds > 0) {
         sleepSync(delay_seconds * 1000)
       }
+    }
+
+    const emitSlowWarningIfDue = (args: any[], start_time: number): void => {
+      if (effective_slow_timeout_ms == null) return
+      const now = Date.now()
+      if (now - last_slow_warning_at < RETRY_SLOW_WARNING_THROTTLE_MS) return
+      last_slow_warning_at = now
+      console.warn(`Warning: ${fn_name}(${formatRetrySlowWarningArgs(args)}) slow (${((now - start_time) / 1000).toFixed(1)}s)`)
     }
 
     const runRetryLoopFromThenable = async (
@@ -373,26 +390,45 @@ export function retry(options: RetryOptions = {}): RetryDecorator {
 
       // ── Retry loop (runs inside the semaphore and re-entrancy context) ──
       const runRetryLoop = async (): Promise<any> => {
-        for (let attempt = 1; attempt <= effective_max_attempts; attempt++) {
-          try {
-            if (timeout != null && timeout > 0) {
-              return await _runWithTimeout(() => Promise.resolve(target.apply(this, args)), timeout * 1000, attempt)
-            } else {
-              return await Promise.resolve(target.apply(this, args))
-            }
-          } catch (error) {
-            if (!shouldRetry(error)) throw error
-
-            // Last attempt: rethrow
-            if (attempt >= effective_max_attempts) throw error
-
-            // Wait before next attempt with exponential backoff
-            await asyncRetryDelay(attempt)
+        const call_started_at = Date.now()
+        const warning_args = [...args]
+        const slow_warning_timer =
+          effective_slow_timeout_ms == null
+            ? null
+            : setTimeout(() => emitSlowWarningIfDue(warning_args, call_started_at), effective_slow_timeout_ms)
+        const finishSlowWarning = (): void => {
+          if (slow_warning_timer !== null) {
+            clearTimeout(slow_warning_timer)
+          }
+          if (effective_slow_timeout_ms != null && Date.now() - call_started_at >= effective_slow_timeout_ms) {
+            emitSlowWarningIfDue(warning_args, call_started_at)
           }
         }
 
-        // Unreachable, but satisfies the type checker
-        throw new Error(`retry(${fn_name}): unexpected end of retry loop`)
+        try {
+          for (let attempt = 1; attempt <= effective_max_attempts; attempt++) {
+            try {
+              if (timeout != null && timeout > 0) {
+                return await _runWithTimeout(() => Promise.resolve(target.apply(this, args)), timeout * 1000, attempt)
+              } else {
+                return await Promise.resolve(target.apply(this, args))
+              }
+            } catch (error) {
+              if (!shouldRetry(error)) throw error
+
+              // Last attempt: rethrow
+              if (attempt >= effective_max_attempts) throw error
+
+              // Wait before next attempt with exponential backoff
+              await asyncRetryDelay(attempt)
+            }
+          }
+
+          // Unreachable, but satisfies the type checker
+          throw new Error(`retry(${fn_name}): unexpected end of retry loop`)
+        } finally {
+          finishSlowWarning()
+        }
       }
 
       try {
@@ -452,27 +488,52 @@ export function retry(options: RetryOptions = {}): RetryDecorator {
       }
 
       const runRetryLoop = (): any => {
-        for (let attempt = 1; attempt <= effective_max_attempts; attempt++) {
-          const attempt_started_at = Date.now()
-          try {
-            const result = target.apply(this, args)
-            if (isThenable(result)) {
-              return runRetryLoopFromThenable(this, args, result, attempt)
-            }
-            if (timeout != null && timeout > 0 && Date.now() - attempt_started_at > timeout * 1000) {
-              throw new RetryTimeoutError(`Timed out after ${timeout}s (attempt ${attempt})`, {
-                timeout_seconds: timeout,
-                attempt,
-              })
-            }
-            return result
-          } catch (error) {
-            if (!shouldRetry(error)) throw error
-            if (attempt >= effective_max_attempts) throw error
-            syncRetryDelay(attempt)
+        const call_started_at = Date.now()
+        const warning_args = [...args]
+        const slow_warning_timer =
+          effective_slow_timeout_ms == null
+            ? null
+            : setTimeout(() => emitSlowWarningIfDue(warning_args, call_started_at), effective_slow_timeout_ms)
+        const finishSlowWarning = (): void => {
+          if (slow_warning_timer !== null) {
+            clearTimeout(slow_warning_timer)
+          }
+          if (effective_slow_timeout_ms != null && Date.now() - call_started_at >= effective_slow_timeout_ms) {
+            emitSlowWarningIfDue(warning_args, call_started_at)
           }
         }
-        throw new Error(`retry(${fn_name}): unexpected end of retry loop`)
+
+        let finish_on_return = true
+        try {
+          for (let attempt = 1; attempt <= effective_max_attempts; attempt++) {
+            const attempt_started_at = Date.now()
+            try {
+              const result = target.apply(this, args)
+              if (isThenable(result)) {
+                finish_on_return = false
+                return runRetryLoopFromThenable(this, args, result, attempt).finally(finishSlowWarning)
+              }
+              if (timeout != null && timeout > 0 && Date.now() - attempt_started_at > timeout * 1000) {
+                throw new RetryTimeoutError(`Timed out after ${timeout}s (attempt ${attempt})`, {
+                  timeout_seconds: timeout,
+                  attempt,
+                })
+              }
+              return result
+            } catch (error) {
+              if (!shouldRetry(error)) throw error
+              if (attempt >= effective_max_attempts) {
+                throw error
+              }
+              syncRetryDelay(attempt)
+            }
+          }
+          throw new Error(`retry(${fn_name}): unexpected end of retry loop`)
+        } finally {
+          if (finish_on_return) {
+            finishSlowWarning()
+          }
+        }
       }
 
       try {
@@ -494,7 +555,8 @@ export function retry(options: RetryOptions = {}): RetryDecorator {
       _context.addInitializer(function (this: unknown) {
         const owner_name = findDecoratedMethodOwnerName(this, _context, retryWrapper)
         if (owner_name) {
-          Object.defineProperty(retryWrapper, 'name', { value: `${owner_name}.${fn_name}`, configurable: true })
+          fn_name = `${owner_name}.${target.name || (_context.name as string) || 'anonymous'}`
+          Object.defineProperty(retryWrapper, 'name', { value: fn_name, configurable: true })
         }
       })
     }
@@ -507,7 +569,13 @@ export function retry(options: RetryOptions = {}): RetryDecorator {
     descriptor?: LegacyMethodDescriptor
   ): T | LegacyMethodDescriptor {
     if (descriptor?.value && typeof descriptor.value === 'function') {
-      descriptor.value = decorateFunction(descriptor.value)
+      const owner_name =
+        target && (typeof target === 'object' || typeof target === 'function')
+          ? typeof target === 'function'
+            ? target.name
+            : (target as { constructor?: { name?: string } }).constructor?.name
+          : null
+      descriptor.value = decorateFunction(descriptor.value, undefined, owner_name)
       return descriptor
     }
     if (typeof target === 'function') {
@@ -567,6 +635,32 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
   return (
     (typeof value === 'object' || typeof value === 'function') && value !== null && typeof (value as { then?: unknown }).then === 'function'
   )
+}
+
+function formatRetrySlowWarningArgs(args: any[]): string {
+  const preview = args.map(formatRetrySlowWarningValue).join(', ')
+  if (preview.length > RETRY_SLOW_WARNING_ARGS_MAX_LENGTH) {
+    return `${preview.slice(0, RETRY_SLOW_WARNING_ARGS_MAX_LENGTH - 3).replace(/,?\s*$/, '')}...`
+  }
+  return preview
+}
+
+function formatRetrySlowWarningValue(value: unknown): string {
+  let text: string
+  if (typeof value === 'string') {
+    text = value
+  } else if (value === null || value === undefined) {
+    text = String(value)
+  } else if (typeof value === 'object') {
+    try {
+      text = JSON.stringify(value)
+    } catch {
+      text = String(value)
+    }
+  } else {
+    text = String(value)
+  }
+  return text.replace(/['"]/g, '').slice(0, 3)
 }
 
 /**

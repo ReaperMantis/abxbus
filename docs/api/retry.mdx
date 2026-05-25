@@ -24,6 +24,7 @@ def retry(
     retry_after: float = 0,
     max_attempts: int = 1,
     timeout: float | None = None,
+    slow_timeout: float | None = None,
     retry_on_errors: list[type[Exception] | re.Pattern[str]] | tuple[type[Exception] | re.Pattern[str], ...] | None = None,
     retry_backoff_factor: float = 1.0,
     semaphore_limit: int | None = None,
@@ -44,6 +45,7 @@ retry({
   retry_backoff_factor?: number,                                        // default: 1.0
   retry_on_errors?: Array<(new (...args) => Error) | RegExp | string>,  // default: retry any error
   timeout?: number | null,                                              // default: no per-attempt timeout
+  slow_timeout?: number | null,                                         // default: disabled
   semaphore_limit?: number | null,                                      // default: no semaphore limit
   semaphore_name?: string | ((...args: any[]) => string) | null,        // default: function name
   semaphore_lax?: boolean,                                              // default: true
@@ -61,6 +63,7 @@ abxbus::retry! {
     retry_after = 1.0,
     retry_backoff_factor = 2.0,
     timeout = 5.0,
+    slow_timeout = 20.0,
     retry_if = should_retry,
     semaphore_limit = 2,
     semaphore_name = "api",
@@ -97,6 +100,7 @@ abxbus::retry! {
 | `retry_backoff_factor` | Delay multiplier applied after each failed attempt. |
 | `retry_on_errors` | Optional matcher list to restrict which errors are retried. |
 | `timeout` | Per-attempt timeout in seconds (`None`/`undefined` means no per-attempt timeout). |
+| `slow_timeout` | Warning threshold for a decorated call, in seconds. Warnings are throttled to at most one every 2 seconds per decorated method/function. |
 | `semaphore_limit` | Max concurrent executions sharing the same semaphore. |
 | `semaphore_name` | Semaphore key (string or function deriving a key from call args). |
 | `semaphore_scope` | Semaphore sharing scope (`multiprocess`, `global`, `class`, `instance`). |

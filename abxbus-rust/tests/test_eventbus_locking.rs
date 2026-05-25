@@ -2290,6 +2290,55 @@ fn test_retry_timed_out_attempts_are_retried_when_max_attempts_gt_one() {
     assert_eq!(*calls.lock().expect("calls lock"), 3);
 }
 
+fn run_retry_slow_warning_child(test_name: &str) -> String {
+    let output = Command::new(env::current_exe().expect("current test executable"))
+        .arg("--exact")
+        .arg(test_name)
+        .arg("--nocapture")
+        .env("ABXBUS_RETRY_SLOW_WARNING_CHILD", "1")
+        .output()
+        .expect("run retry slow warning child");
+    assert!(
+        output.status.success(),
+        "slow warning child failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stderr).to_string()
+}
+
+#[test]
+fn test_retry_slow_timeout_throttles_per_decorated_method() {
+    let stderr = run_retry_slow_warning_child("retry_slow_warning_child_entry");
+    let warnings = stderr
+        .lines()
+        .filter(|line| line.starts_with("Warning: Service.run("))
+        .collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with("Warning: Service.run() slow (0."));
+}
+
+#[test]
+fn retry_slow_warning_child_entry() {
+    if env::var("ABXBUS_RETRY_SLOW_WARNING_CHILD").ok().as_deref() != Some("1") {
+        return;
+    }
+
+    struct Service;
+    impl Service {
+        abxbus::retry! {
+            max_attempts = 1, slow_timeout = 0.01;
+            fn run(&self) -> Result<&'static str, RetryTestError> {
+                        thread::sleep(Duration::from_millis(30));
+                        Ok("ok")
+                    }
+        }
+    }
+
+    assert_eq!(Service.run().unwrap(), "ok");
+    assert_eq!(Service.run().unwrap(), "ok");
+    assert_eq!(Service.run().unwrap(), "ok");
+}
+
 // ─── Semaphore behavior ──────────────────────────────────────────────────────
 
 #[test]

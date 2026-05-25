@@ -451,6 +451,59 @@ pub fn duration_from_seconds(seconds: f64) -> Option<Duration> {
     (seconds > 0.0).then(|| Duration::from_secs_f64(seconds))
 }
 
+pub fn retry_function_name(function_name: &str, type_name: &str) -> String {
+    if type_name.is_empty() {
+        return function_name.to_string();
+    }
+    let short_type_name = type_name.rsplit("::").next().unwrap_or(type_name);
+    format!("{short_type_name}.{function_name}")
+}
+
+pub fn format_retry_slow_warning_args(args: Vec<(&str, String)>) -> String {
+    let mut preview = args
+        .into_iter()
+        .map(|(_, value)| {
+            value
+                .replace('"', "")
+                .replace('\'', "")
+                .chars()
+                .take(3)
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    if preview.len() > 80 {
+        preview.truncate(77);
+        preview = preview.trim_end_matches(&[',', ' ']).to_string();
+        preview.push_str("...");
+    }
+    preview
+}
+
+pub fn emit_retry_slow_timeout_warning_if_due(
+    function_name: &str,
+    args_preview: &str,
+    started_at: Instant,
+    last_warning: &'static OnceLock<Mutex<Option<Instant>>>,
+) {
+    let now = Instant::now();
+    let mut last_warning = last_warning
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .expect("retry slow warning throttle");
+    if last_warning
+        .as_ref()
+        .is_some_and(|previous| now.duration_since(*previous) < Duration::from_secs(2))
+    {
+        return;
+    }
+    *last_warning = Some(now);
+    eprintln!(
+        "Warning: {function_name}({args_preview}) slow ({:.1}s)",
+        now.duration_since(started_at).as_secs_f64()
+    );
+}
+
 pub fn scoped_semaphore_key(
     base_name: String,
     scope: &str,
@@ -596,6 +649,13 @@ macro_rules! __retry_timeout {
 }
 
 #[macro_export]
+macro_rules! __retry_slow_timeout {
+    ($default:expr;) => { $default };
+    ($default:expr; slow_timeout = $value:expr $(, $($rest:tt)*)?) => { Some($value as f64) };
+    ($default:expr; $key:ident = $value:expr $(, $($rest:tt)*)?) => { $crate::__retry_slow_timeout!($default; $($($rest)*)?) };
+}
+
+#[macro_export]
 macro_rules! __retry_semaphore_timeout {
     ($default:expr;) => { $default };
     ($default:expr; semaphore_timeout = $value:expr $(, $($rest:tt)*)?) => { Some($value as f64) };
@@ -643,17 +703,20 @@ macro_rules! __retry_should_retry {
 
 #[macro_export]
 macro_rules! __retry_sync_fn {
-    (($($opts:tt)*) $vis:vis fn $name:ident($($args:tt)*) -> Result<$ok:ty, $err:ty> $body:block, $instance_key:expr, $type_name:expr) => {
+    (($($opts:tt)*) $vis:vis fn $name:ident($($args:tt)*) -> Result<$ok:ty, $err:ty> $body:block, $instance_key:expr, $type_name:expr, [$($warning_arg:ident),*]) => {
         $vis fn $name($($args)*) -> Result<$ok, $err> {
             let __max_attempts: usize = ::std::cmp::max(1, $crate::__retry_max_attempts!(1usize; $($opts)*));
             let __retry_after: f64 = f64::max($crate::__retry_retry_after!(Some(0.0); $($opts)*).unwrap_or(0.0), 0.0);
             let __retry_backoff_factor: f64 = $crate::__retry_retry_backoff_factor!(Some(1.0); $($opts)*).unwrap_or(1.0);
             let __timeout: Option<f64> = $crate::__retry_timeout!(None; $($opts)*);
+            let __slow_timeout: Option<f64> = $crate::__retry_slow_timeout!(None; $($opts)*);
             let __semaphore_limit: Option<usize> = $crate::__retry_semaphore_limit!(None; $($opts)*);
             let __semaphore_lax: bool = $crate::__retry_semaphore_lax!(true; $($opts)*);
             let __semaphore_timeout: Option<f64> = $crate::__retry_semaphore_timeout!(None; $($opts)*);
             let __semaphore_scope: &str = $crate::__retry_semaphore_scope!("global"; $($opts)*);
             let __semaphore_name: String = $crate::__retry_semaphore_name!(stringify!($name).to_string(); $($opts)*);
+            let __retry_slow_warning_function_name = $crate::retry::retry_function_name(stringify!($name), $type_name);
+            let __retry_slow_warning_args = String::new();
             let __semaphore_key = $crate::retry::scoped_semaphore_key(__semaphore_name, __semaphore_scope, $type_name, $instance_key);
             let __guard = $crate::retry::acquire_semaphore_sync(
                 __semaphore_key,
@@ -664,6 +727,26 @@ macro_rules! __retry_sync_fn {
                 __semaphore_lax,
             ).map_err(<$err as ::std::convert::From<$crate::retry::RetryError>>::from)?;
             let _ = &__guard;
+            static __RETRY_LAST_SLOW_WARNING_AT: ::std::sync::OnceLock<::std::sync::Mutex<Option<::std::time::Instant>>> = ::std::sync::OnceLock::new();
+            let __retry_slow_warning_done = __slow_timeout.filter(|__slow_timeout| *__slow_timeout > 0.0).map(|__slow_timeout| {
+                let __retry_slow_warning_started_at = ::std::time::Instant::now();
+                let __retry_slow_warning_function_name = __retry_slow_warning_function_name.clone();
+                let __retry_slow_warning_args = __retry_slow_warning_args.clone();
+                let __retry_slow_warning_done = ::std::sync::Arc::new(::std::sync::atomic::AtomicBool::new(false));
+                let __retry_slow_warning_done_for_thread = __retry_slow_warning_done.clone();
+                ::std::thread::spawn(move || {
+                    ::std::thread::sleep(::std::time::Duration::from_secs_f64(__slow_timeout));
+                    if !__retry_slow_warning_done_for_thread.load(::std::sync::atomic::Ordering::SeqCst) {
+                        $crate::retry::emit_retry_slow_timeout_warning_if_due(
+                            &__retry_slow_warning_function_name,
+                            &__retry_slow_warning_args,
+                            __retry_slow_warning_started_at,
+                            &__RETRY_LAST_SLOW_WARNING_AT,
+                        );
+                    }
+                });
+                __retry_slow_warning_done
+            });
             for __attempt in 1..=__max_attempts {
                 let __attempt_started = ::std::time::Instant::now();
                 let __result: Result<$ok, $err> = (|| $body)();
@@ -678,11 +761,17 @@ macro_rules! __retry_sync_fn {
                 };
                 match __result {
                     Ok(value) => {
+                        if let Some(__retry_slow_warning_done) = &__retry_slow_warning_done {
+                            __retry_slow_warning_done.store(true, ::std::sync::atomic::Ordering::SeqCst);
+                        }
                         let _ = &__guard;
                         return Ok(value);
                     }
                     Err(error) => {
                         if !$crate::__retry_should_retry!(&error; $($opts)*) || __attempt >= __max_attempts {
+                            if let Some(__retry_slow_warning_done) = &__retry_slow_warning_done {
+                                __retry_slow_warning_done.store(true, ::std::sync::atomic::Ordering::SeqCst);
+                            }
                             let _ = &__guard;
                             return Err(error);
                         }
@@ -700,17 +789,20 @@ macro_rules! __retry_sync_fn {
 
 #[macro_export]
 macro_rules! __retry_async_fn {
-    (($($opts:tt)*) $vis:vis async fn $name:ident($($args:tt)*) -> Result<$ok:ty, $err:ty> $body:block, $instance_key:expr, $type_name:expr) => {
+    (($($opts:tt)*) $vis:vis async fn $name:ident($($args:tt)*) -> Result<$ok:ty, $err:ty> $body:block, $instance_key:expr, $type_name:expr, [$($warning_arg:ident),*]) => {
         $vis async fn $name($($args)*) -> Result<$ok, $err> {
             let __max_attempts: usize = ::std::cmp::max(1, $crate::__retry_max_attempts!(1usize; $($opts)*));
             let __retry_after: f64 = f64::max($crate::__retry_retry_after!(Some(0.0); $($opts)*).unwrap_or(0.0), 0.0);
             let __retry_backoff_factor: f64 = $crate::__retry_retry_backoff_factor!(Some(1.0); $($opts)*).unwrap_or(1.0);
             let __timeout: Option<f64> = $crate::__retry_timeout!(None; $($opts)*);
+            let __slow_timeout: Option<f64> = $crate::__retry_slow_timeout!(None; $($opts)*);
             let __semaphore_limit: Option<usize> = $crate::__retry_semaphore_limit!(None; $($opts)*);
             let __semaphore_lax: bool = $crate::__retry_semaphore_lax!(true; $($opts)*);
             let __semaphore_timeout: Option<f64> = $crate::__retry_semaphore_timeout!(None; $($opts)*);
             let __semaphore_scope: &str = $crate::__retry_semaphore_scope!("global"; $($opts)*);
             let __semaphore_name: String = $crate::__retry_semaphore_name!(stringify!($name).to_string(); $($opts)*);
+            let __retry_slow_warning_function_name = $crate::retry::retry_function_name(stringify!($name), $type_name);
+            let __retry_slow_warning_args = String::new();
             let __semaphore_key = $crate::retry::scoped_semaphore_key(__semaphore_name, __semaphore_scope, $type_name, $instance_key);
             let __held_key = __semaphore_key.clone();
             let __guard = $crate::retry::acquire_semaphore_async(
@@ -722,6 +814,26 @@ macro_rules! __retry_async_fn {
                 __semaphore_lax,
             ).await.map_err(<$err as ::std::convert::From<$crate::retry::RetryError>>::from)?;
             let _ = &__guard;
+            static __RETRY_LAST_SLOW_WARNING_AT: ::std::sync::OnceLock<::std::sync::Mutex<Option<::std::time::Instant>>> = ::std::sync::OnceLock::new();
+            let __retry_slow_warning_done = __slow_timeout.filter(|__slow_timeout| *__slow_timeout > 0.0).map(|__slow_timeout| {
+                let __retry_slow_warning_started_at = ::std::time::Instant::now();
+                let __retry_slow_warning_function_name = __retry_slow_warning_function_name.clone();
+                let __retry_slow_warning_args = __retry_slow_warning_args.clone();
+                let __retry_slow_warning_done = ::std::sync::Arc::new(::std::sync::atomic::AtomicBool::new(false));
+                let __retry_slow_warning_done_for_thread = __retry_slow_warning_done.clone();
+                ::std::thread::spawn(move || {
+                    ::std::thread::sleep(::std::time::Duration::from_secs_f64(__slow_timeout));
+                    if !__retry_slow_warning_done_for_thread.load(::std::sync::atomic::Ordering::SeqCst) {
+                        $crate::retry::emit_retry_slow_timeout_warning_if_due(
+                            &__retry_slow_warning_function_name,
+                            &__retry_slow_warning_args,
+                            __retry_slow_warning_started_at,
+                            &__RETRY_LAST_SLOW_WARNING_AT,
+                        );
+                    }
+                });
+                __retry_slow_warning_done
+            });
             for __attempt in 1..=__max_attempts {
                 let __result: Result<$ok, $err> = if let Some(__timeout_seconds) = __timeout {
                     let __future = $crate::retry::with_held_async(__held_key.clone(), async $body);
@@ -740,11 +852,17 @@ macro_rules! __retry_async_fn {
                 };
                 match __result {
                     Ok(value) => {
+                        if let Some(__retry_slow_warning_done) = &__retry_slow_warning_done {
+                            __retry_slow_warning_done.store(true, ::std::sync::atomic::Ordering::SeqCst);
+                        }
                         let _ = &__guard;
                         return Ok(value);
                     }
                     Err(error) => {
                         if !$crate::__retry_should_retry!(&error; $($opts)*) || __attempt >= __max_attempts {
+                            if let Some(__retry_slow_warning_done) = &__retry_slow_warning_done {
+                                __retry_slow_warning_done.store(true, ::std::sync::atomic::Ordering::SeqCst);
+                            }
                             let _ = &__guard;
                             return Err(error);
                         }
@@ -763,15 +881,15 @@ macro_rules! __retry_async_fn {
 #[macro_export]
 macro_rules! retry {
     ($($opt_key:ident = $opt_value:expr),* $(,)? ; $vis:vis async fn $name:ident(&$self_arg:ident $(, $arg:ident : $argty:ty)* $(,)?) -> Result<$ok:ty, $err:ty> $body:block) => {
-        $crate::__retry_async_fn!(($($opt_key = $opt_value),*) $vis async fn $name(&$self_arg $(, $arg : $argty)*) -> Result<$ok, $err> $body, Some($self_arg as *const Self as usize), ::std::any::type_name::<Self>());
+        $crate::__retry_async_fn!(($($opt_key = $opt_value),*) $vis async fn $name(&$self_arg $(, $arg : $argty)*) -> Result<$ok, $err> $body, Some($self_arg as *const Self as usize), ::std::any::type_name::<Self>(), [$($arg),*]);
     };
     ($($opt_key:ident = $opt_value:expr),* $(,)? ; $vis:vis fn $name:ident(&$self_arg:ident $(, $arg:ident : $argty:ty)* $(,)?) -> Result<$ok:ty, $err:ty> $body:block) => {
-        $crate::__retry_sync_fn!(($($opt_key = $opt_value),*) $vis fn $name(&$self_arg $(, $arg : $argty)*) -> Result<$ok, $err> $body, Some($self_arg as *const Self as usize), ::std::any::type_name::<Self>());
+        $crate::__retry_sync_fn!(($($opt_key = $opt_value),*) $vis fn $name(&$self_arg $(, $arg : $argty)*) -> Result<$ok, $err> $body, Some($self_arg as *const Self as usize), ::std::any::type_name::<Self>(), [$($arg),*]);
     };
     ($($opt_key:ident = $opt_value:expr),* $(,)? ; $vis:vis async fn $name:ident($($arg:ident : $argty:ty),* $(,)?) -> Result<$ok:ty, $err:ty> $body:block) => {
-        $crate::__retry_async_fn!(($($opt_key = $opt_value),*) $vis async fn $name($($arg : $argty),*) -> Result<$ok, $err> $body, None, "");
+        $crate::__retry_async_fn!(($($opt_key = $opt_value),*) $vis async fn $name($($arg : $argty),*) -> Result<$ok, $err> $body, None, "", [$($arg),*]);
     };
     ($($opt_key:ident = $opt_value:expr),* $(,)? ; $vis:vis fn $name:ident($($arg:ident : $argty:ty),* $(,)?) -> Result<$ok:ty, $err:ty> $body:block) => {
-        $crate::__retry_sync_fn!(($($opt_key = $opt_value),*) $vis fn $name($($arg : $argty),*) -> Result<$ok, $err> $body, None, "");
+        $crate::__retry_sync_fn!(($($opt_key = $opt_value),*) $vis fn $name($($arg : $argty),*) -> Result<$ok, $err> $body, None, "", [$($arg),*]);
     };
 }

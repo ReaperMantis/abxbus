@@ -89,6 +89,8 @@ class _RetrySemaphore:
 GLOBAL_RETRY_SEMAPHORES: dict[str, _RetrySemaphore] = {}
 GLOBAL_RETRY_SEMAPHORE_LOCK = threading.Lock()
 HELD_RETRY_SEMAPHORES: ContextVar[frozenset[str]] = ContextVar('held_retry_semaphores', default=frozenset())
+RETRY_SLOW_WARNING_THROTTLE_SECONDS = 2.0
+RETRY_SLOW_WARNING_ARGS_MAX_LENGTH = 80
 
 # Multiprocess semaphore support
 MULTIPROCESS_SEMAPHORE_DIR = Path(tempfile.gettempdir()) / 'browser_use_semaphores'
@@ -197,6 +199,27 @@ def _calculate_semaphore_timeout(
 def _callable_name(func: Callable[..., Any]) -> str:
     """Return a stable name for logs even for callable instances."""
     return getattr(func, '__name__', func.__class__.__name__)
+
+
+def _callable_display_name(func: Callable[..., Any]) -> str:
+    name = getattr(func, '__qualname__', _callable_name(func))
+    if '<locals>.' in name:
+        name = name.split('<locals>.')[-1]
+    return name
+
+
+def _format_slow_warning_value(value: Any) -> str:
+    return str(value).replace('"', '').replace("'", '')[:3]
+
+
+def _format_slow_warning_args(func_name: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> str:
+    display_args = args[1:] if '.' in func_name and args else args
+    parts = [_format_slow_warning_value(arg) for arg in display_args]
+    parts.extend(f'{key}={_format_slow_warning_value(value)}' for key, value in kwargs.items())
+    preview = ', '.join(parts)
+    if len(preview) > RETRY_SLOW_WARNING_ARGS_MAX_LENGTH:
+        return preview[: RETRY_SLOW_WARNING_ARGS_MAX_LENGTH - 3].rstrip(', ') + '...'
+    return preview
 
 
 def _resolve_semaphore_name(
@@ -666,6 +689,7 @@ def retry(
     retry_after: float = 0,
     max_attempts: int = 1,
     timeout: float | None = None,
+    slow_timeout: float | None = None,
     retry_on_errors: RetryOnErrors | None = None,
     retry_backoff_factor: float = 1.0,
     semaphore_limit: int | None = None,
@@ -681,6 +705,7 @@ def retry(
                 retry_after: Seconds to wait between retries
                 max_attempts: Total attempts including the initial call (1 = no retries)
                 timeout: Per-attempt timeout in seconds (`None` = no per-attempt timeout)
+                slow_timeout: Emit a warning when a decorated call exceeds this many seconds
                 retry_on_errors: Error matchers to retry on (Exception subclasses or compiled regexes)
                 retry_backoff_factor: Multiplier for retry delay after each attempt (1.0 = no backoff)
                 semaphore_limit: Max concurrent executions (creates semaphore if needed)
@@ -713,9 +738,23 @@ def retry(
 
     def decorator(func: Callable[P, T]) -> Callable[P, T]:
         func_name = _callable_name(func)
+        func_display_name = _callable_display_name(func)
         effective_max_attempts = max(1, max_attempts)
         effective_retry_after = max(0, retry_after)
         effective_semaphore_limit = semaphore_limit if semaphore_limit is not None and semaphore_limit > 0 else None
+        effective_slow_timeout = slow_timeout if slow_timeout is not None and slow_timeout > 0 else None
+        last_slow_warning_at = 0.0
+
+        def _emit_slow_warning_if_due(args: tuple[Any, ...], kwargs: dict[str, Any], start_time: float) -> None:
+            nonlocal last_slow_warning_at
+            if effective_slow_timeout is None:
+                return
+            now = time.monotonic()
+            if now - last_slow_warning_at < RETRY_SLOW_WARNING_THROTTLE_SECONDS:
+                return
+            last_slow_warning_at = now
+            args_preview = _format_slow_warning_args(func_display_name, args, kwargs)
+            logger.warning(f'Warning: {func_display_name}({args_preview}) slow ({now - start_time:.1f}s)')
 
         async def _release_async_semaphore(semaphore: Any, multiprocess_lock: Any, semaphore_acquired: bool) -> None:
             if semaphore_acquired and semaphore:
@@ -761,6 +800,7 @@ def retry(
             semaphore_acquired = False
             multiprocess_lock: Any = None
             held_token: Any = None
+            slow_warning_task: asyncio.Task[None] | None = None
             sem_start = time.time()
 
             # Handle semaphore if specified
@@ -793,6 +833,16 @@ def retry(
 
             # Execute function with retries
             start_time = time.time()
+            slow_warning_start_time = time.monotonic()
+            if effective_slow_timeout is not None:
+                warning_args = tuple(args)
+                warning_kwargs = dict(kwargs)
+
+                async def _slow_warning_monitor() -> None:
+                    await asyncio.sleep(effective_slow_timeout)
+                    _emit_slow_warning_if_due(warning_args, warning_kwargs, slow_warning_start_time)
+
+                slow_warning_task = asyncio.create_task(_slow_warning_monitor())
             try:
                 return await _execute_with_retries(
                     cast(Callable[P, Coroutine[Any, Any, Any]], func),
@@ -809,6 +859,8 @@ def retry(
                 )
             finally:
                 # Clean up: decrement active operations and release semaphore
+                if slow_warning_task is not None:
+                    slow_warning_task.cancel()
                 _track_active_operations(increment=False)
                 if held_token is not None:
                     HELD_RETRY_SEMAPHORES.reset(held_token)
@@ -820,6 +872,7 @@ def retry(
             semaphore_acquired = False
             multiprocess_lock: Any = None
             held_token: Any = None
+            slow_warning_timer: threading.Timer | None = None
             sem_start = time.time()
 
             if effective_semaphore_limit is not None:
@@ -845,6 +898,17 @@ def retry(
             _check_system_overload_if_needed()
 
             start_time = time.time()
+            slow_warning_start_time = time.monotonic()
+            if effective_slow_timeout is not None:
+                warning_args = tuple(args)
+                warning_kwargs = dict(kwargs)
+                slow_warning_timer = threading.Timer(
+                    effective_slow_timeout,
+                    _emit_slow_warning_if_due,
+                    args=(warning_args, warning_kwargs, slow_warning_start_time),
+                )
+                slow_warning_timer.daemon = True
+                slow_warning_timer.start()
             try:
                 result = _execute_with_retries_sync(
                     func,
@@ -865,6 +929,8 @@ def retry(
                         try:
                             return await cast(Awaitable[Any], result)
                         finally:
+                            if slow_warning_timer is not None:
+                                slow_warning_timer.cancel()
                             _track_active_operations(increment=False)
                             if held_token is not None:
                                 HELD_RETRY_SEMAPHORES.reset(held_token)
@@ -873,6 +939,11 @@ def retry(
                     return finalize_async_result()
                 return result
             finally:
+                if (
+                    slow_warning_timer is not None
+                    and ('result' not in locals() or not _is_async_retry_result(locals()['result']))
+                ):
+                    slow_warning_timer.cancel()
                 if 'result' not in locals() or not _is_async_retry_result(locals()['result']):
                     _track_active_operations(increment=False)
                     if held_token is not None:
