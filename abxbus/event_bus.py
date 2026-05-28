@@ -1812,6 +1812,8 @@ class EventBus:
                             except asyncio.CancelledError:
                                 return
                             if exc is not None:
+                                if isinstance(exc, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
+                                    return
                                 logger.exception('❌ Weak run loop parallel event task error: %s %s', type(exc).__name__, exc)
 
                         task.add_done_callback(_on_done)
