@@ -50,6 +50,43 @@ func TestZeroTimeoutAllowsSlowHandler(t *testing.T) {
 	}
 }
 
+func TestWaitUntilIdleZeroTimeoutWaitsIndefinitely(t *testing.T) {
+	bus := abxbus.NewEventBus("WaitUntilIdleZeroTimeoutBus", nil)
+	t.Cleanup(bus.Destroy)
+
+	release := make(chan struct{})
+	bus.On("WaitUntilIdleZeroTimeoutEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		<-release
+		return "ok", nil
+	}, nil)
+
+	event := bus.Emit(abxbus.NewBaseEvent("WaitUntilIdleZeroTimeoutEvent", nil))
+	done := make(chan bool, 1)
+	zero := 0.0
+	go func() {
+		done <- bus.WaitUntilIdle(&zero)
+	}()
+
+	select {
+	case result := <-done:
+		t.Fatalf("WaitUntilIdle(0) should wait indefinitely until idle, got %v before release", result)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case result := <-done:
+		if !result {
+			t.Fatal("WaitUntilIdle(0) should return true after the bus becomes idle")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WaitUntilIdle(0) did not return after the bus became idle")
+	}
+	if result, err := event.EventResult(); err != nil || result != "ok" {
+		t.Fatalf("expected completed event result, got %#v err=%v", result, err)
+	}
+}
+
 func TestProcessingTimeTimeoutDefaultsResolveAtExecutionTime(t *testing.T) {
 	eventTimeout := 12.0
 	eventSlowTimeout := 34.0
