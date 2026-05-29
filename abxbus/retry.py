@@ -835,11 +835,12 @@ def retry(
             start_time = time.time()
             slow_warning_start_time = time.monotonic()
             if effective_slow_timeout is not None:
+                slow_timeout_seconds = effective_slow_timeout
                 warning_args = tuple(args)
                 warning_kwargs = dict(kwargs)
 
                 async def _slow_warning_monitor() -> None:
-                    await asyncio.sleep(effective_slow_timeout)
+                    await asyncio.sleep(slow_timeout_seconds)
                     _emit_slow_warning_if_due(warning_args, warning_kwargs, slow_warning_start_time)
 
                 slow_warning_task = asyncio.create_task(_slow_warning_monitor())
@@ -939,9 +940,8 @@ def retry(
                     return finalize_async_result()
                 return result
             finally:
-                if (
-                    slow_warning_timer is not None
-                    and ('result' not in locals() or not _is_async_retry_result(locals()['result']))
+                if slow_warning_timer is not None and (
+                    'result' not in locals() or not _is_async_retry_result(locals()['result'])
                 ):
                     slow_warning_timer.cancel()
                 if 'result' not in locals() or not _is_async_retry_result(locals()['result']):

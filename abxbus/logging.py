@@ -250,8 +250,10 @@ def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any
     reset = '\033[0m'
 
     logger.warning('=' * 80)
+    timeout = timed_out_result.timeout
+    timeout_label = f'{timeout}s' if timeout is not None else 'the configured handler timeout'
     logger.warning(
-        f'⏱️  TIMEOUT ERROR - Handling took more than {event.event_timeout}s for {timed_out_result.eventbus_label}.{timed_out_result.handler_name}({event})'
+        f'⏱️  TIMEOUT ERROR - Handling took more than {timeout_label} for {timed_out_result.eventbus_label}.{timed_out_result.handler_name}({event})'
     )
     logger.warning('=' * 80)
 

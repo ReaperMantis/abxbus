@@ -710,6 +710,67 @@ async def test_event_timeout_none_uses_bus_default_timeout_at_execution() -> Non
 
 
 @pytest.mark.asyncio
+async def test_event_timeout_zero_disables_timeout_instead_of_using_bus_default() -> None:
+    bus = EventBus(name='TimeoutZeroDisablesBusDefault', event_timeout=0.01)
+
+    async def handler(_event: TimeoutDefaultsEvent) -> str:
+        await asyncio.sleep(0.02)
+        return 'slow'
+
+    bus.on(TimeoutDefaultsEvent, handler)
+
+    try:
+        event = await bus.emit(TimeoutDefaultsEvent(event_timeout=0)).now()
+        handler_result = next(iter(event.event_results.values()))
+        assert event.event_timeout == 0
+        assert handler_result.status == 'completed'
+        assert handler_result.result == 'slow'
+        assert handler_result.timeout is None
+    finally:
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_bus_default_zero_disables_timeouts_when_event_timeout_is_zero() -> None:
+    bus = EventBus(name='TimeoutZeroBusDefault', event_timeout=0)
+
+    async def handler(_event: TimeoutDefaultsEvent) -> str:
+        await asyncio.sleep(0.02)
+        return 'ok'
+
+    bus.on(TimeoutDefaultsEvent, handler)
+
+    try:
+        event = await bus.emit(TimeoutDefaultsEvent(event_timeout=0)).now()
+        handler_result = next(iter(event.event_results.values()))
+        assert handler_result.status == 'completed'
+        assert handler_result.result == 'ok'
+        assert handler_result.timeout is None
+    finally:
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_wait_until_idle_zero_waits_without_timeout() -> None:
+    bus = EventBus(name='WaitUntilIdleZeroTimeoutBus')
+
+    async def handler(_event: TimeoutDefaultsEvent) -> str:
+        await asyncio.sleep(0.02)
+        return 'ok'
+
+    bus.on(TimeoutDefaultsEvent, handler)
+
+    try:
+        event = bus.emit(TimeoutDefaultsEvent(event_timeout=0))
+        await bus.wait_until_idle(timeout=0)
+        handler_result = next(iter(event.event_results.values()))
+        assert handler_result.status == 'completed'
+        assert handler_result.result == 'ok'
+    finally:
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
 async def test_handler_timeout_resolution_matches_ts_precedence() -> None:
     bus = EventBus(name='TimeoutPrecedenceBus', event_timeout=0.2)
 

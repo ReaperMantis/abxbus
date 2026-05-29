@@ -1014,6 +1014,22 @@ test('bus default zero disables timeouts when event_timeout is zero', async () =
   assert.equal(result.result, 'ok')
 })
 
+test('waitUntilIdle zero waits without timeout', async () => {
+  const bus = new EventBus('WaitUntilIdleZeroTimeoutBus')
+
+  bus.on(TimeoutEvent, async () => {
+    await delay(20)
+    return 'ok'
+  })
+
+  const event = bus.emit(TimeoutEvent({ event_timeout: 0 }))
+  assert.equal(await bus.waitUntilIdle(0), true)
+
+  const result = Array.from(event.event_results.values())[0]
+  assert.equal(result.status, 'completed')
+  assert.equal(result.result, 'ok')
+})
+
 test('event_timeout null uses bus default timeout at execution', async () => {
   const bus = new EventBus('TimeoutNullUsesBusDefault', { event_timeout: 0.01 })
 

@@ -464,7 +464,10 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         async def wait_for_handler_to_complete_and_return_result() -> T_EventResultType | 'BaseEvent[Any]' | None:
             assert self.handler_completed_signal is not None, 'EventResult cannot be awaited outside of an async context'
             try:
-                await asyncio.wait_for(self.handler_completed_signal.wait(), timeout=self.timeout)
+                if self.timeout is None or self.timeout <= 0:
+                    await self.handler_completed_signal.wait()
+                else:
+                    await asyncio.wait_for(self.handler_completed_signal.wait(), timeout=self.timeout)
             except TimeoutError:
                 raise TimeoutError(
                     f'Event handler {self.eventbus_label}.{self.handler_name}(#{self.event_id[-4:]}) timed out after {self.timeout}s'
@@ -558,7 +561,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         started_at_dt = datetime.fromisoformat(started_at)
         elapsed_seconds = max(0.0, (datetime.now(UTC) - started_at_dt).total_seconds())
         logger.warning(
-            '⚠️ Slow event handler: %s.on(%s#%s, %s) still running after %.1fs',
+            '⚠️ Slow event handler: %s.on(%s#%s, %s) still running after %.2fs',
             eventbus.label,
             event.event_type,
             event.event_id[-4:],
@@ -615,6 +618,9 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
     @asynccontextmanager
     async def _run_with_timeout(self, event: 'BaseEvent[T_EventResultType]') -> AsyncGenerator[None]:
         """Apply handler timeout and normalize timeout expiry to EventHandlerTimeoutError."""
+        if self.timeout is None or self.timeout <= 0:
+            yield
+            return
         timeout_scope = asyncio.timeout(self.timeout)
         try:
             async with timeout_scope:

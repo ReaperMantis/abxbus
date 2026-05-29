@@ -1685,7 +1685,7 @@ class EventBus:
         assert self._on_idle and self.pending_event_queue, 'EventBus._start() must be called before wait_until_idle() is reached'
 
         start_time = asyncio.get_event_loop().time()
-        remaining_timeout = timeout
+        remaining_timeout = timeout if timeout is not None and timeout > 0 else None
 
         try:
             # Wait until both queue and inflight execution are empty.
@@ -1698,7 +1698,7 @@ class EventBus:
                     self._on_idle.set()
                     break
 
-                if timeout is not None:
+                if timeout is not None and timeout > 0:
                     elapsed = asyncio.get_event_loop().time() - start_time
                     remaining_timeout = max(0, timeout - elapsed)
                     if remaining_timeout <= 0:
