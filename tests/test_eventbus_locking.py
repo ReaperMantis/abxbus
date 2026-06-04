@@ -445,11 +445,15 @@ async def test_retry_global_handler_lock_serializes_handlers_across_buses() -> N
 
 # Folded from test_retry.py to keep test layout class-based.
 import inspect
+import json
 import multiprocessing
 import os
 import re
+import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 import abxbus.retry as retry_helpers
@@ -660,6 +664,56 @@ def worker_with_custom_limit(
 
 class TestMultiprocessSemaphore:
     """Test multiprocess semaphore functionality."""
+
+    def test_multiprocess_semaphore_dir_respects_env_before_import(self, tmp_path: Path):
+        """Multiprocess semaphores should use a caller-owned runtime dir."""
+        semaphore_dir = tmp_path / 'semaphores'
+        env = os.environ.copy()
+        env['ABXBUS_MULTIPROCESS_SEMAPHORE_DIR'] = str(semaphore_dir)
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                '-c',
+                """
+import asyncio
+import json
+from abxbus.retry import MULTIPROCESS_SEMAPHORE_DIR, retry
+
+async def main():
+    @retry(
+        max_attempts=1,
+        semaphore_limit=1,
+        semaphore_name='test_env_multiprocess_sem',
+        semaphore_scope='multiprocess',
+        semaphore_timeout=2,
+        semaphore_lax=False,
+    )
+    async def protected():
+        return 'ok'
+
+    protected_result = await protected()
+    print(json.dumps({
+        'result': protected_result,
+        'semaphore_dir': str(MULTIPROCESS_SEMAPHORE_DIR),
+        'exists': MULTIPROCESS_SEMAPHORE_DIR.exists(),
+    }))
+
+asyncio.run(main())
+""",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=10,
+        )
+
+        assert result.returncode == 0, result.stderr
+        output = json.loads(result.stdout)
+        assert output['result'] == 'ok'
+        assert output['semaphore_dir'] == str(semaphore_dir)
+        assert output['exists'] is True
+        assert semaphore_dir.exists()
 
     def test_basic_multiprocess_semaphore(self):
         """Test that semaphore limits work across processes."""

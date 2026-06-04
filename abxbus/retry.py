@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import re
-import tempfile
 import threading
 import time
 from collections.abc import Awaitable, Callable, Coroutine
@@ -93,9 +92,24 @@ RETRY_SLOW_WARNING_THROTTLE_SECONDS = 2.0
 RETRY_SLOW_WARNING_ARGS_MAX_LENGTH = 80
 
 # Multiprocess semaphore support
-MULTIPROCESS_SEMAPHORE_DIR = Path(tempfile.gettempdir()) / 'browser_use_semaphores'
-MULTIPROCESS_SEMAPHORE_DIR.mkdir(exist_ok=True)
 MULTIPROCESS_STALE_LOCK_SECONDS = 300.0
+
+
+def _default_multiprocess_semaphore_dir() -> Path:
+    configured = os.environ.get('ABXBUS_MULTIPROCESS_SEMAPHORE_DIR')
+    if configured:
+        return Path(configured).expanduser()
+
+    runtime_dir = os.environ.get('XDG_RUNTIME_DIR')
+    if runtime_dir:
+        return Path(runtime_dir).expanduser() / 'abxbus' / 'semaphores'
+
+    cache_home = os.environ.get('XDG_CACHE_HOME')
+    cache_dir = Path(cache_home).expanduser() if cache_home else Path.home() / '.cache'
+    return cache_dir / 'abxbus' / 'semaphores'
+
+
+MULTIPROCESS_SEMAPHORE_DIR = _default_multiprocess_semaphore_dir()
 
 # Global overload detection state
 _last_overload_check = 0.0
