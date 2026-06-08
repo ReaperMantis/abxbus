@@ -13,7 +13,7 @@ WebSocketEventBridge - local server and/or client connection modes.
   Both modes can be active simultaneously on the same bridge instance.
 
 WebSocketRelayEventBridge - external relay server mode.
-  Both Python and browser clients connect to the same relay server as WebSocket clients.
+  Bridge clients connect to the same relay server as WebSocket clients.
   The relay server broadcasts all received messages to all connected clients on the same
   channel (identified by the URL path).
 
