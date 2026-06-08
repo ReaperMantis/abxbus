@@ -31,6 +31,8 @@ __all__ = [
     'RedisEventBridge',
     'PostgresEventBridge',
     'TachyonEventBridge',
+    'WebSocketEventBridge',
+    'WebSocketRelayEventBridge',
 ]
 
 if TYPE_CHECKING:
@@ -38,12 +40,16 @@ if TYPE_CHECKING:
     from .bridge_postgres import PostgresEventBridge
     from .bridge_redis import RedisEventBridge
     from .bridge_tachyon import TachyonEventBridge
+    from .bridge_websocket import WebSocketEventBridge
+    from .bridge_websocket import WebSocketRelayEventBridge
 
 _LAZY_BRIDGE_MODULES: dict[str, str] = {
     'NATSEventBridge': '.bridge_nats',
     'RedisEventBridge': '.bridge_redis',
     'PostgresEventBridge': '.bridge_postgres',
     'TachyonEventBridge': '.bridge_tachyon',
+    'WebSocketEventBridge': '.bridge_websocket',
+    'WebSocketRelayEventBridge': '.bridge_websocket',
 }
 
 
