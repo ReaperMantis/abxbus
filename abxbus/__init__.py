@@ -12,7 +12,7 @@ from .base_event import (
     PythonIdStr,
     UUIDStr,
 )
-from .bridges import EventBridge, HTTPEventBridge, JSONLEventBridge, SocketEventBridge, SQLiteEventBridge
+from .bridges import EventBridge, HTTPEventBridge, JSONLEventBridge, SocketEventBridge, SQLiteEventBridge, WebSocketEventBridge, WebSocketRelayEventBridge
 from .event_bus import EventBus
 from .event_handler import (
     EventHandler,
