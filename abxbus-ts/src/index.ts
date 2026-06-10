@@ -12,6 +12,8 @@ export { SocketEventBridge } from './SocketEventBridge.js'
 export { JSONLEventBridge } from './JSONLEventBridge.js'
 export { SQLiteEventBridge } from './SQLiteEventBridge.js'
 export type { EventBusMiddleware, EventBusMiddlewareCtor, EventBusMiddlewareInput } from './EventBusMiddleware.js'
+export { WebSocketEventBridge, WebSocketRelayEventBridge } from './WebSocketEventBridge.js'  
+export type { WebSocketEventBridgeOptions } from './WebSocketEventBridge.js'
 export { monotonicDatetime } from './helpers.js'
 export {
   EventHandlerTimeoutError,

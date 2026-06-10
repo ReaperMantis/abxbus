@@ -101,7 +101,8 @@
     "@tachyon-ipc/core": "^0.5.0",
     "ioredis": "^5.10.1",
     "nats": "^2.29.3",
-    "pg": "^8.20.0"
+    "pg": "^8.20.0",
+    "ws": ">=8"
   },
   "peerDependenciesMeta": {
     "@opentelemetry/api": {
@@ -127,7 +128,10 @@
     },
     "pg": {
       "optional": true
-    }
+    },
+    "ws": {
+      "optional": true
+    }  
   },
   "repository": {
     "type": "git",
