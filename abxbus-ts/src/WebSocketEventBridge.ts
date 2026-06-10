@@ -376,7 +376,7 @@ export class WebSocketEventBridge {
     if (!this.client_ws) {    
       if (!this.client_connected) {    
         throw new Error(`WebSocketEventBridge: client not connected to ${this.send_to?.raw}`)    
-      }
+      }    
       await raceWithConnectTimeout(  
         this.client_connected.promise,  
         `WebSocketEventBridge to ${this.send_to?.raw}`,  
