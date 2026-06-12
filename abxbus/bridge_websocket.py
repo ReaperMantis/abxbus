@@ -7,19 +7,25 @@ Two classes are provided:
 WebSocketEventBridge - local server and/or client connection modes.
   - Server mode (listen_on='ws://host:port'): starts a local WebSocket server that
     accepts client connections and broadcasts outbound events to all connected clients.
+    Inbound messages from connected clients are dispatched to registered handlers.
   - Client mode (send_to='ws://host:port'): connects to an external WebSocket server,
     maintains a persistent connection with automatic reconnect, and sends outbound
-    events over that connection.
-  Both modes can be active simultaneously on the same bridge instance.
+    events over that connection. Inbound messages from the server are dispatched to
+    registered handlers.
+  Both modes can be active simultaneously on the same bridge instance for receiving
+  inbound events. However, outbound emit() sends exclusively via the client connection
+  when send_to is set, regardless of whether listen_on is also configured. Server-
+  connected clients do not receive outbound events in bidirectional mode.
 
 WebSocketRelayEventBridge - external relay server mode.
   Bridge clients connect to the same relay server as WebSocket clients.
-  The relay server broadcasts all received messages to all connected clients on the same
-  channel (identified by the URL path).
+  The relay server broadcasts all received messages to all OTHER connected clients on
+  the same channel (identified by the URL path). The sending client is excluded from
+  the broadcast. Maintains a persistent connection with automatic reconnect.
 
   Compatible relay servers:
-  - Any WebSocket broadcast relay (custom or third-party)
-  - Centrifugo (wss://host/connection/websocket with its own envelope protocol)
+  - Any WebSocket broadcast relay (custom or third-party) that echoes messages to all
+    other clients on the same channel
   - A minimal custom relay - see the "Minimal relay server" section below
 
 Usage:
@@ -33,7 +39,8 @@ Usage:
     bridge.on('*', bus.emit)
     await bridge.start()
 
-    # Bidirectional with a bus
+    # Bidirectional with a bus (note: emit() sends only via the client connection;
+    # clients connected to the local server do not receive outbound events)
     bridge = WebSocketEventBridge(
         send_to='ws://peer.example.com:8765',
         listen_on='ws://0.0.0.0:8765',
@@ -57,6 +64,7 @@ Minimal relay server (Python, websockets>=12):
         channels.setdefault(path, set()).add(ws)
         try:
             async for message in ws:
+                # Broadcast to all OTHER clients on the same channel (sender excluded)
                 peers = channels.get(path, set()) - {ws}
                 for peer in peers:
                     await peer.send(message)
