@@ -340,8 +340,7 @@ publish_artifacts() {
         if [[ -n "${pypi_token}" ]]; then
             UV_PUBLISH_TOKEN="${pypi_token}" uv publish --username=__token__ dist/*
         else
-            echo "Missing PyPI credentials: set UV_PUBLISH_TOKEN or PYPI_TOKEN" >&2
-            return 1
+            uv publish --trusted-publishing always dist/*
         fi
     fi
 
