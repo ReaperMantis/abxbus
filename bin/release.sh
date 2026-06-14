@@ -373,11 +373,6 @@ main() {
     slug="$(repo_slug)"
     branch="$(default_branch)"
 
-    if [[ "${GITHUB_EVENT_NAME:-}" == "push" ]]; then
-        validate_release_state "${slug}" "${branch}"
-        return 0
-    fi
-
     if [[ "$(git branch --show-current)" != "${branch}" ]]; then
         echo "Release must run from ${branch}, found $(git branch --show-current)" >&2
         return 1
@@ -398,15 +393,12 @@ main() {
         git add -A
         git commit -m "release: ${version}"
         git push origin "${branch}"
-
-        wait_for_runs "${slug}" push "$(git rev-parse HEAD)" "push"
     elif [[ "${relation}" == "gt" ]]; then
         if [[ -n "$(git status --short)" ]]; then
             echo "Refusing to publish existing unreleased version ${version} with a dirty worktree" >&2
             return 1
         fi
         run_checks
-        wait_for_runs "${slug}" push "$(git rev-parse HEAD)" "push"
     else
         echo "Current version ${version} is behind latest GitHub release ${latest}" >&2
         return 1
