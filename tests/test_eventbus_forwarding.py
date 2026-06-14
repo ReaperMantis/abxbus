@@ -266,7 +266,7 @@ async def test_circular_forwarding_from_middle_peer_does_not_loop():
         try:
             await _wait_all_idle(buses)
         except TimeoutError:
-            pytest.fail(f'Forwarding completion race left bus(es) non-idle.\n{_dump_bus_state(buses)}')
+            raise AssertionError(f'Forwarding completion race left bus(es) non-idle.\n{_dump_bus_state(buses)}')
 
         assert seen1 == [event.event_id]
         assert seen2 == [event.event_id]

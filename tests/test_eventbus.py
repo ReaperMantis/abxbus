@@ -1220,7 +1220,7 @@ class TestEventBusHierarchy:
                 await asyncio.wait_for(peer2.wait_until_idle(), timeout=5)
                 await asyncio.wait_for(peer3.wait_until_idle(), timeout=5)
             except TimeoutError:
-                pytest.fail(f'Circular test stalled during first propagation.\n{dump_bus_state()}')
+                raise AssertionError(f'Circular test stalled during first propagation.\n{dump_bus_state()}')
 
             # Each peer should receive the event exactly once
             assert len(events_at_peer1) == 1
@@ -1252,7 +1252,7 @@ class TestEventBusHierarchy:
                 await asyncio.wait_for(peer2.wait_until_idle(), timeout=5)
                 await asyncio.wait_for(peer3.wait_until_idle(), timeout=5)
             except TimeoutError:
-                pytest.fail(f'Circular test stalled during second propagation.\n{dump_bus_state()}')
+                raise AssertionError(f'Circular test stalled during second propagation.\n{dump_bus_state()}')
 
             # Should visit peer2 -> peer3 -> peer1, then stop
             assert len(events_at_peer1) == 1

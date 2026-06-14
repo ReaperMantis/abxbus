@@ -433,7 +433,7 @@ writeFileSync(outputPath, JSON.stringify(roundtripped, null, 2), 'utf8')
             timeout=SUBPROCESS_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired as exc:
-        pytest.fail(f'node/esm event roundtrip timed out after {SUBPROCESS_TIMEOUT_SECONDS}s: {exc}')
+        raise AssertionError(f'node/esm event roundtrip timed out after {SUBPROCESS_TIMEOUT_SECONDS}s: {exc}')
 
     assert proc.returncode == 0, f'node/esm roundtrip failed:\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}'
     return json.loads(out_path.read_text(encoding='utf-8'))
@@ -485,7 +485,7 @@ writeFileSync(outputPath, JSON.stringify(roundtripped, null, 2), 'utf8')
             timeout=SUBPROCESS_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired as exc:
-        pytest.fail(f'node/esm bus roundtrip timed out after {SUBPROCESS_TIMEOUT_SECONDS}s: {exc}')
+        raise AssertionError(f'node/esm bus roundtrip timed out after {SUBPROCESS_TIMEOUT_SECONDS}s: {exc}')
 
     assert proc.returncode == 0, f'node/esm bus roundtrip failed:\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}'
     return json.loads(out_path.read_text(encoding='utf-8'))
@@ -522,7 +522,7 @@ def _rust_roundtrip(mode: str, payload: list[dict[str, Any]] | dict[str, Any], t
             timeout=RUST_SUBPROCESS_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired as exc:
-        pytest.fail(f'rust {mode} roundtrip timed out after {RUST_SUBPROCESS_TIMEOUT_SECONDS}s: {exc}')
+        raise AssertionError(f'rust {mode} roundtrip timed out after {RUST_SUBPROCESS_TIMEOUT_SECONDS}s: {exc}')
 
     assert proc.returncode == 0, f'rust {mode} roundtrip failed:\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}'
     return json.loads(output_path.read_text(encoding='utf-8'))
@@ -566,7 +566,7 @@ def _go_roundtrip(mode: str, payload: list[dict[str, Any]] | dict[str, Any], tmp
             timeout=GO_SUBPROCESS_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired as exc:
-        pytest.fail(f'go {mode} roundtrip timed out after {GO_SUBPROCESS_TIMEOUT_SECONDS}s: {exc}')
+        raise AssertionError(f'go {mode} roundtrip timed out after {GO_SUBPROCESS_TIMEOUT_SECONDS}s: {exc}')
 
     assert proc.returncode == 0, f'go {mode} roundtrip failed:\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}'
     return json.loads(output_path.read_text(encoding='utf-8'))
