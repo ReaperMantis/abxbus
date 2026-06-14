@@ -331,17 +331,12 @@ create_release() {
 
 publish_artifacts() {
     local version="$1"
-    local pypi_token="${UV_PUBLISH_TOKEN:-${PYPI_TOKEN:-${PYPI_PAT_SECRET:-}}}"
     local npm_token="${NODE_AUTH_TOKEN:-${NPM_TOKEN:-}}"
 
     if curl -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | jq -e --arg version "${version}" '.releases[$version] | length > 0' >/dev/null 2>&1; then
         echo "${PYPI_PACKAGE} ${version} already published on PyPI"
     else
-        if [[ -n "${pypi_token}" ]]; then
-            UV_PUBLISH_TOKEN="${pypi_token}" uv publish --username=__token__ dist/*
-        else
-            uv publish --trusted-publishing always dist/*
-        fi
+        uv publish --trusted-publishing always dist/*
     fi
 
     if npm view "${NPM_PACKAGE}@${version}" version --silent >/dev/null 2>&1; then

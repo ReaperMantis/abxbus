@@ -63,6 +63,5 @@ jobs:
         env:
           DEFAULT_BRANCH: main
           GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN || github.token }}
-          PYPI_PAT_SECRET: ${{ secrets.PYPI_PAT_SECRET }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: ./bin/release.sh
