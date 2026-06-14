@@ -40,6 +40,20 @@ jobs:
           cache: pnpm
           cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
+      - name: Install native build tools
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: cmake gcc-14 g++-14
+          version: native-release-build-tools-v1
+          execute_install_scripts: true
+
+      - name: Configure native build tools
+        run: |
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+          cmake --version
+          gcc-14 --version
+
       - name: Configure git identity
         run: |
           git config user.name "github-actions[bot]"
