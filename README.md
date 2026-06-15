@@ -1210,13 +1210,18 @@ prek run --all-files   # run pre-commit hooks on all files manually
 uv run ruff check --fix
 uv run ruff format
 uv run pyright
+```
 
+<!--pytest.mark.skip(reason="pytest invocation")-->
+```bash
 # Run all tests
 uv run pytest -vxs --full-trace tests/
 
 # Run specific test file
 uv run pytest tests/test_eventbus.py
+```
 
+```bash
 # Run Python perf suite
 uv run tests/performance_runtime.py
 

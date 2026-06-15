@@ -21,6 +21,7 @@ description: Use this when working on typed events, event bus execution, event h
 
 ## Development Setup
 
+<!--pytest.mark.skip(reason="pytest invocation")-->
 ```bash
 uv sync
 uv run pytest --collect-only -q
@@ -50,6 +51,7 @@ result = await bus.emit(UserEvent(username="alice")).result()
 
 ## Verification
 
+<!--pytest.mark.skip(reason="pytest invocation")-->
 ```bash
 uv run pytest tests -q
 uv run pytest tests/test_event_bus.py -q
