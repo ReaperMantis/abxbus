@@ -137,8 +137,8 @@ const normalizeJsonSchemaValue = (schema: unknown): unknown => {
   return normalized
 }
 
-export const toJsonSchema = (schema: z.core.$ZodType): JsonSchema => {
-  return normalizeJsonSchema(z.toJSONSchema(schema) as JsonSchema)
+export const toJsonSchema = (schema: z.core.$ZodType, params?: z.core.ToJSONSchemaParams): JsonSchema => {
+  return normalizeJsonSchema(z.toJSONSchema(schema, params) as JsonSchema)
 }
 
 export const fromJsonSchema = (schema: JsonSchema): z.ZodTypeAny => {

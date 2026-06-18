@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { z } from 'zod'
 
 import { BaseEvent, EventBus } from '../src/index.js'
 
@@ -225,6 +226,62 @@ test('EventBus toJSON promotes pending events into event_history snapshot', asyn
 
   release_pause()
   await pending.now()
+})
+
+test('EventBus toJSON serializes history events when Zod event schema encode fails', () => {
+  const bus = new EventBus('TransformHistorySerializationBus')
+  const TransformEvent = BaseEvent.extend('TransformHistorySerializationEvent', {
+    count: z.string().transform(Number),
+  })
+  try {
+    const event = TransformEvent({ count: '7' })
+    bus.event_history.set(event.event_id, event)
+
+    assert.equal((Array.from(bus.event_history.values())[0] as unknown as { count: number }).count, 7)
+    const json = bus.toJSON()
+    assert.equal((json.event_history[event.event_id] as Record<string, unknown>).count, 7)
+  } finally {
+    bus.destroy()
+  }
+})
+
+test('EventBus toJSON falls back to closest JSON Schema for transform event_result_type fields', () => {
+  const bus = new EventBus('TransformResultSchemaSerializationBus')
+  const TransformResultEvent = BaseEvent.extend('TransformResultSchemaSerializationEvent', {
+    event_result_type: z.object({
+      label: z.string(),
+      count: z.string().transform(Number),
+      nested: z.object({
+        ok: z.boolean(),
+        bad: z.string().transform(Number),
+      }),
+      maybe: z.string().transform(Number).optional(),
+      items: z.array(z.string().transform(Number)),
+      choice: z.union([z.string().transform(Number), z.number()]),
+    }),
+  })
+  try {
+    const event = TransformResultEvent({})
+    bus.event_history.set(event.event_id, event)
+
+    const json = bus.toJSON()
+    const result_schema = (json.event_history[event.event_id] as Record<string, unknown>).event_result_type as Record<string, unknown>
+    const properties = result_schema.properties as Record<string, unknown>
+    assert.deepEqual(Object.keys(properties).sort(), ['choice', 'count', 'items', 'label', 'maybe', 'nested'])
+    assert.deepEqual(result_schema.required, ['choice', 'count', 'items', 'label', 'nested'])
+    assert.equal((properties.label as Record<string, unknown>).type, 'string')
+    assert.equal((properties.count as Record<string, unknown>).type, 'string')
+    assert.equal((properties.maybe as Record<string, unknown>).type, 'string')
+    assert.equal(((properties.items as Record<string, unknown>).items as Record<string, unknown>).type, 'string')
+    assert.deepEqual((properties.choice as Record<string, unknown>).anyOf, [{ type: 'string' }, { type: 'number' }])
+
+    const nested_properties = (properties.nested as Record<string, unknown>).properties as Record<string, unknown>
+    assert.deepEqual(Object.keys(nested_properties).sort(), ['bad', 'ok'])
+    assert.deepEqual((properties.nested as Record<string, unknown>).required, ['bad', 'ok'])
+    assert.equal((nested_properties.bad as Record<string, unknown>).type, 'string')
+  } finally {
+    bus.destroy()
+  }
 })
 
 test('EventBus.fromJSON preserves event_history object order', () => {

@@ -518,6 +518,29 @@ function encodeEventSchema(schema: AnyEventSchema, input: Record<string, unknown
   return encoded
 }
 
+function encodeEventSchemaForJSON(schema: AnyEventSchema, input: Record<string, unknown>): Record<string, unknown> {
+  try {
+    return encodeEventSchema(schema, input)
+  } catch {
+    return { ...input }
+  }
+}
+
+function eventResultTypeToJSON(schema: z.ZodTypeAny | undefined): JsonSchema | undefined {
+  if (!schema) {
+    return undefined
+  }
+  try {
+    return toJsonSchema(schema)
+  } catch {
+    try {
+      return toJsonSchema(schema, { io: 'input' })
+    } catch {
+      return undefined
+    }
+  }
+}
+
 export class BaseEvent {
   // event metadata fields
   event_id!: string // unique uuidv7 identifier for the event
@@ -809,7 +832,7 @@ export class BaseEvent {
       (this.constructor as typeof BaseEvent).event_schema ??
       this.event_schema ??
       BaseEventSchema) as AnyEventSchema
-    const encoded = encodeEventSchema(event_parse_schema, {
+    const encoded = encodeEventSchemaForJSON(event_parse_schema, {
       ...record,
       event_id: this.event_id,
       event_type: this.event_type,
@@ -847,7 +870,7 @@ export class BaseEvent {
       event_id: this.event_id,
       event_type: this.event_type,
       event_version: this.event_version,
-      event_result_type: this.event_result_type ? toJsonSchema(this.event_result_type) : this.event_result_type,
+      event_result_type: eventResultTypeToJSON(this.event_result_type),
 
       // static configuration options
       event_timeout: this.event_timeout,
