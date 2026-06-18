@@ -711,6 +711,7 @@ fn test_now_on_non_proxied_event_keeps_bus_paused_during_queue_jump() {
         }
     });
 
+    let mut runloop_pause = bus.locks.request_runloop_pause();
     let event1 = bus.emit(Event1 {
         ..Default::default()
     });
@@ -718,6 +719,7 @@ fn test_now_on_non_proxied_event_keeps_bus_paused_during_queue_jump() {
         ..Default::default()
     });
     let _ = block_on(event1.now());
+    runloop_pause.release();
     block_on(bus.wait_until_idle(Some(2.0)));
 
     let order = execution_order.lock().expect("order lock").clone();
