@@ -163,6 +163,9 @@ def _json_shape_contains(actual: JsonShape, expected: JsonShape) -> bool:
 
 
 def _assert_json_shape_equal(actual: Any, expected: Any, context: str) -> None:
+    # event_extra_payload is an in-memory escape hatch only; wire JSON must stay flat.
+    assert '"event_extra_payload"' not in json.dumps(actual), f'{context}: emitted event_extra_payload wrapper'
+    assert '"event_extra_payload"' not in json.dumps(expected), f'{context}: fixture used event_extra_payload wrapper'
     assert _json_shape_contains(_json_shape(actual), _json_shape(expected)), f'{context}: JSON shape changed'
 
 
@@ -229,63 +232,159 @@ def _assert_json_schema_layout(event_type: str, schema: dict[str, Any], context:
 
 
 def _build_python_roundtrip_cases() -> list[RoundtripCase]:
-    parent = PyTsIntResultEvent(
-        value=7,
-        label='parent',
-        event_path=['PyBus#aaaa'],
-        event_timeout=12.5,
+    parent = PyTsIntResultEvent.model_validate(
+        {
+            'value': 7,
+            'label': 'parent',
+            'event_path': ['PyBus#aaaa'],
+            'event_timeout': 12.5,
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 0,
+                'nested': ['kept', {'event_type': 'PyTsIntResultEvent'}],
+            },
+        }
     )
 
-    screenshot_event = PyTsScreenshotEvent(
-        target_id='0c1ccf21-65c0-7390-8b64-9182e985740e',
-        quality='high',
-        event_parent_id=parent.event_id,
-        event_path=['PyBus#aaaa', 'TsBridge#bbbb'],
-        event_timeout=33.0,
+    screenshot_event = PyTsScreenshotEvent.model_validate(
+        {
+            'target_id': '0c1ccf21-65c0-7390-8b64-9182e985740e',
+            'quality': 'high',
+            'event_parent_id': parent.event_id,
+            'event_path': ['PyBus#aaaa', 'TsBridge#bbbb'],
+            'event_timeout': 33.0,
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 11,
+                'nested': ['kept', {'event_type': 'PyTsScreenshotEvent'}],
+            },
+        }
     )
 
-    float_event = PyTsFloatResultEvent(
-        marker='float',
-        event_parent_id=parent.event_id,
-        event_path=['PyBus#aaaa'],
+    float_event = PyTsFloatResultEvent.model_validate(
+        {
+            'marker': 'float',
+            'event_parent_id': parent.event_id,
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 1,
+                'nested': ['kept', {'event_type': 'PyTsFloatResultEvent'}],
+            },
+        }
     )
-    string_event = PyTsStringResultEvent(
-        marker='string',
-        event_parent_id=parent.event_id,
-        event_path=['PyBus#aaaa'],
+    string_event = PyTsStringResultEvent.model_validate(
+        {
+            'marker': 'string',
+            'event_parent_id': parent.event_id,
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 2,
+                'nested': ['kept', {'event_type': 'PyTsStringResultEvent'}],
+            },
+        }
     )
-    bool_event = PyTsBoolResultEvent(
-        marker='bool',
-        event_path=['PyBus#aaaa'],
+    bool_event = PyTsBoolResultEvent.model_validate(
+        {
+            'marker': 'bool',
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 3,
+                'nested': ['kept', {'event_type': 'PyTsBoolResultEvent'}],
+            },
+        }
     )
-    null_event = PyTsNullResultEvent(
-        marker='null',
-        event_path=['PyBus#aaaa'],
+    null_event = PyTsNullResultEvent.model_validate(
+        {
+            'marker': 'null',
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 4,
+                'nested': ['kept', {'event_type': 'PyTsNullResultEvent'}],
+            },
+        }
     )
-    list_event = PyTsStringListResultEvent(
-        marker='list[str]',
-        event_parent_id=parent.event_id,
-        event_path=['PyBus#aaaa'],
+    list_event = PyTsStringListResultEvent.model_validate(
+        {
+            'marker': 'list[str]',
+            'event_parent_id': parent.event_id,
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 5,
+                'nested': ['kept', {'event_type': 'PyTsStringListResultEvent'}],
+            },
+        }
     )
-    dict_event = PyTsDictResultEvent(
-        marker='dict[str,int]',
-        event_path=['PyBus#aaaa'],
+    dict_event = PyTsDictResultEvent.model_validate(
+        {
+            'marker': 'dict[str,int]',
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 6,
+                'nested': ['kept', {'event_type': 'PyTsDictResultEvent'}],
+            },
+        }
     )
-    nested_map_event = PyTsNestedMapResultEvent(
-        marker='dict[str,list[int]]',
-        event_path=['PyBus#aaaa'],
+    nested_map_event = PyTsNestedMapResultEvent.model_validate(
+        {
+            'marker': 'dict[str,list[int]]',
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 7,
+                'nested': ['kept', {'event_type': 'PyTsNestedMapResultEvent'}],
+            },
+        }
     )
-    typed_dict_event = PyTsTypedDictResultEvent(
-        marker='typeddict',
-        event_path=['PyBus#aaaa'],
+    typed_dict_event = PyTsTypedDictResultEvent.model_validate(
+        {
+            'marker': 'typeddict',
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 8,
+                'nested': ['kept', {'event_type': 'PyTsTypedDictResultEvent'}],
+            },
+        }
     )
-    dataclass_event = PyTsDataclassResultEvent(
-        marker='dataclass',
-        event_path=['PyBus#aaaa'],
+    dataclass_event = PyTsDataclassResultEvent.model_validate(
+        {
+            'marker': 'dataclass',
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 9,
+                'nested': ['kept', {'event_type': 'PyTsDataclassResultEvent'}],
+            },
+        }
     )
-    recursive_event = PyTsRecursiveNodeEvent(
-        marker='recursive',
-        event_path=['PyBus#aaaa'],
+    recursive_event = PyTsRecursiveNodeEvent.model_validate(
+        {
+            'marker': 'recursive',
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 12,
+                'nested': ['kept', {'event_type': 'PyTsRecursiveNodeEvent'}],
+            },
+        }
     )
 
     return [
@@ -1363,7 +1462,7 @@ async def _running_process(command: list[str], *, cwd: Path | None = None) -> As
         command,
         cwd=str(cwd) if cwd else None,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
     )
     try:
@@ -1378,29 +1477,18 @@ async def _running_process(command: list[str], *, cwd: Path | None = None) -> As
                 process.wait(timeout=5)
 
 
-async def _wait_for_port(port: int, timeout: float = 30.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            _, writer = await asyncio.open_connection('127.0.0.1', port)
-            writer.close()
-            await writer.wait_closed()
-            return
-        except OSError:
-            await asyncio.sleep(0.05)
-    raise TimeoutError(f'port did not open in time: {port}')
+async def _read_process_line(process: subprocess.Popen[str]) -> str:
+    assert process.stdout is not None
+    line = await asyncio.to_thread(process.stdout.readline)
+    if line:
+        return line.rstrip('\n')
+    returncode = process.wait()
+    raise AssertionError(f'process exited before readiness/result ({returncode})')
 
 
-async def _wait_for_path(path: Path, *, process: subprocess.Popen[str], timeout: float = 30.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if path.exists():
-            return
-        if process.poll() is not None:
-            stdout, stderr = process.communicate()
-            raise AssertionError(f'worker exited early ({process.returncode})\nstdout:\n{stdout}\nstderr:\n{stderr}')
-        await asyncio.sleep(0.05)
-    raise TimeoutError(f'path did not appear in time: {path}')
+async def _wait_for_process_output(process: subprocess.Popen[str], marker: str) -> None:
+    while marker not in await _read_process_line(process):
+        pass
 
 
 def _make_sender_bridge(kind: str, config: dict[str, Any], *, low_latency: bool = False) -> Any:
@@ -1452,85 +1540,71 @@ def _make_listener_bridge(kind: str, config: dict[str, Any], *, low_latency: boo
 
 
 async def _measure_warm_latency_ms(kind: str, config: dict[str, Any]) -> float:
-    attempts = 3
-    last_error: BaseException | None = None
+    sender = _make_sender_bridge(kind, config, low_latency=True)
+    receiver = _make_listener_bridge(kind, config, low_latency=True)
 
-    for _attempt in range(attempts):
-        sender = _make_sender_bridge(kind, config, low_latency=True)
-        receiver = _make_listener_bridge(kind, config, low_latency=True)
+    run_suffix = uuid7str()[-8:]
+    warmup_prefix = f'warmup_{run_suffix}_'
+    measured_prefix = f'measured_{run_suffix}_'
+    warmup_count_target = 5
+    measured_count_target = 1000
 
-        run_suffix = uuid7str()[-8:]
-        warmup_prefix = f'warmup_{run_suffix}_'
-        measured_prefix = f'measured_{run_suffix}_'
-        warmup_count_target = 5
-        measured_count_target = 1000
+    warmup_seen_count = 0
+    measured_seen_count = 0
+    warmup_seen = asyncio.Event()
+    measured_seen = asyncio.Event()
 
-        warmup_seen_count = 0
-        measured_seen_count = 0
-        warmup_seen = asyncio.Event()
-        measured_seen = asyncio.Event()
+    async def _on_event(event: BaseEvent[Any]) -> None:
+        nonlocal warmup_seen_count, measured_seen_count
+        label = getattr(event, 'label', '')
+        if not isinstance(label, str):
+            return
+        if label.startswith(warmup_prefix):
+            warmup_seen_count += 1
+            if warmup_seen_count >= warmup_count_target:
+                warmup_seen.set()
+            return
+        if label.startswith(measured_prefix):
+            measured_seen_count += 1
+            if measured_seen_count >= measured_count_target:
+                measured_seen.set()
 
-        async def _on_event(event: BaseEvent[Any]) -> None:
-            nonlocal warmup_seen_count, measured_seen_count
-            label = getattr(event, 'label', '')
-            if not isinstance(label, str):
-                return
-            if label.startswith(warmup_prefix):
-                warmup_seen_count += 1
-                if warmup_seen_count >= warmup_count_target:
-                    warmup_seen.set()
-                return
-            if label.startswith(measured_prefix):
-                measured_seen_count += 1
-                if measured_seen_count >= measured_count_target:
-                    measured_seen.set()
+    try:
+        await sender.start()
+        await receiver.start()
+        receiver.on('IPCPingEvent', _on_event)
+        await asyncio.sleep(0.1)
 
-        try:
-            await sender.start()
-            await receiver.start()
-            receiver.on('IPCPingEvent', _on_event)
-            await asyncio.sleep(0.1)
-
-            for index in range(warmup_count_target):
-                await sender.emit(
-                    IPCPingEvent(
-                        label=f'{warmup_prefix}{index}',
-                    )
+        for index in range(warmup_count_target):
+            await sender.emit(
+                IPCPingEvent(
+                    label=f'{warmup_prefix}{index}',
                 )
-            await asyncio.wait_for(warmup_seen.wait(), timeout=60.0)
+            )
+        await asyncio.wait_for(warmup_seen.wait(), timeout=60.0)
 
-            start_ns = time.perf_counter_ns()
-            for index in range(measured_count_target):
-                await sender.emit(
-                    IPCPingEvent(
-                        label=f'{measured_prefix}{index}',
-                    )
+        start_ns = time.perf_counter_ns()
+        for index in range(measured_count_target):
+            await sender.emit(
+                IPCPingEvent(
+                    label=f'{measured_prefix}{index}',
                 )
-            await asyncio.wait_for(measured_seen.wait(), timeout=600.0)
-            elapsed_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
-            return elapsed_ms / measured_count_target
-        except TimeoutError as exc:
-            last_error = exc
-        finally:
-            await sender.close()
-            await receiver.close()
-
-        await asyncio.sleep(0.2)
-
-    raise RuntimeError(f'bridge latency measurement timed out after {attempts} attempts: {kind}') from last_error
+            )
+        await asyncio.wait_for(measured_seen.wait(), timeout=600.0)
+        elapsed_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
+        return elapsed_ms / measured_count_target
+    finally:
+        await sender.close()
+        await receiver.close()
 
 
 async def _assert_roundtrip(kind: str, config: dict[str, Any]) -> None:
     temp_path = _make_temp_dir(f'abxbus-bridge-{kind}')
     try:
         worker_config_path = temp_path / 'worker_config.json'
-        worker_ready_path = temp_path / 'worker_ready'
-        received_event_path = temp_path / 'received_event.json'
         worker_config = {
             **config,
             'kind': kind,
-            'ready_path': str(worker_ready_path),
-            'output_path': str(received_event_path),
         }
         worker_config_path.write_text(json.dumps(worker_config), encoding='utf-8')
 
@@ -1543,7 +1617,7 @@ async def _assert_roundtrip(kind: str, config: dict[str, Any]) -> None:
             text=True,
         )
         try:
-            await _wait_for_path(worker_ready_path, process=worker)
+            assert json.loads(await _read_process_line(worker)) == {'ready': True}
             if kind == 'postgres':
                 await sender.start()
             outbound = IPCPingEvent(
@@ -1561,8 +1635,8 @@ async def _assert_roundtrip(kind: str, config: dict[str, Any]) -> None:
                 },
             )
             await sender.emit(outbound)
-            await _wait_for_path(received_event_path, process=worker)
-            received_payload = json.loads(received_event_path.read_text(encoding='utf-8'))
+            received_message = json.loads(await _read_process_line(worker))
+            received_payload = received_message['event']
             assert 'event_status' in received_payload
             assert 'event_started_at' in received_payload
             assert _normalize_roundtrip_payload(received_payload) == _normalize_roundtrip_payload(
@@ -1661,7 +1735,7 @@ async def test_redis_event_bridge_roundtrip_between_processes() -> None:
             str(temp_dir),
         ]
         async with _running_process(command) as redis_process:
-            await _wait_for_port(port)
+            await _wait_for_process_output(redis_process, 'Ready to accept connections')
             await _assert_roundtrip('redis', {'url': f'redis://127.0.0.1:{port}/1/abxbus_events'})
             latency_ms = await _measure_warm_latency_ms('redis', {'url': f'redis://127.0.0.1:{port}/1/abxbus_events'})
             print(f'LATENCY python redis {latency_ms:.3f}ms')
@@ -1675,7 +1749,7 @@ async def test_nats_event_bridge_roundtrip_between_processes() -> None:
     port = _free_tcp_port()
     command = ['nats-server', '-a', '127.0.0.1', '-p', str(port)]
     async with _running_process(command) as nats_process:
-        await _wait_for_port(port)
+        await _wait_for_process_output(nats_process, 'Server is ready')
         await _assert_roundtrip('nats', {'server': f'nats://127.0.0.1:{port}', 'subject': 'abxbus_events'})
         latency_ms = await _measure_warm_latency_ms('nats', {'server': f'nats://127.0.0.1:{port}', 'subject': 'abxbus_events'})
         print(f'LATENCY python nats {latency_ms:.3f}ms')
@@ -1713,7 +1787,7 @@ async def test_postgres_event_bridge_roundtrip_between_processes() -> None:
         port = _free_tcp_port()
         command = ['postgres', '-D', str(data_dir), '-h', '127.0.0.1', '-p', str(port), '-k', '/tmp']
         async with _running_process(command) as postgres_process:
-            await _wait_for_port(port)
+            await _wait_for_process_output(postgres_process, 'database system is ready to accept connections')
             await _assert_roundtrip('postgres', {'url': f'postgresql://postgres@127.0.0.1:{port}/postgres/abxbus_events'})
 
             asyncpg = __import__('asyncpg')

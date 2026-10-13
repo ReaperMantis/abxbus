@@ -11,7 +11,7 @@ use std::{
 
 use abxbus::{
     base_event::{BaseEvent, EventResultOptions, EventWaitOptions},
-    event_bus::{DestroyOptions, EventBus, EventBusOptions},
+    event_bus::{DestroyOptions, EventBus, EventBusOptions, FilterOptions},
     event_result::{EventResult, EventResultStatus},
     types::{
         EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode, EventStatus,
@@ -43,18 +43,9 @@ event! {
         event_type: "ModelFieldsDefaultEvent",
     }
 }
-fn wait_for_eventbus_weak_refs_to_drop(refs: &[Weak<EventBus>]) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        EventBus::all_instances_len();
-        if refs.iter().all(|weak_ref| weak_ref.upgrade().is_none()) {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        thread::sleep(Duration::from_millis(1));
-    }
+fn eventbus_weak_refs_dropped(refs: &[Weak<EventBus>]) -> bool {
+    EventBus::all_instances_len();
+    refs.iter().all(|weak_ref| weak_ref.upgrade().is_none())
 }
 
 fn panic_message(result: std::thread::Result<()>) -> String {
@@ -74,6 +65,7 @@ event! {
         event_type: "UserActionEvent",
     }
 }
+
 #[test]
 fn test_eventbus_exposes_locks_api_surface() {
     let bus = EventBus::new(Some("GateSurfaceBus".to_string()));
@@ -245,11 +237,13 @@ fn expected_base_event_json_keys(include_results: bool) -> BTreeSet<String> {
         "event_parent_id".to_string(),
         "event_path".to_string(),
         "event_pending_bus_count".to_string(),
+        "event_result_ttl".to_string(),
         "event_result_type".to_string(),
         "event_slow_timeout".to_string(),
         "event_started_at".to_string(),
         "event_status".to_string(),
         "event_timeout".to_string(),
+        "event_ttl".to_string(),
         "event_type".to_string(),
         "event_version".to_string(),
     ]);
@@ -267,6 +261,7 @@ fn expected_event_handler_json_keys() -> BTreeSet<String> {
         "handler_file_path".to_string(),
         "handler_name".to_string(),
         "handler_registered_at".to_string(),
+        "handler_result_ttl".to_string(),
         "handler_slow_timeout".to_string(),
         "handler_timeout".to_string(),
         "id".to_string(),
@@ -286,6 +281,7 @@ fn expected_event_result_json_keys() -> BTreeSet<String> {
         "handler_id".to_string(),
         "handler_name".to_string(),
         "handler_registered_at".to_string(),
+        "handler_result_ttl".to_string(),
         "handler_slow_timeout".to_string(),
         "handler_timeout".to_string(),
         "id".to_string(),
@@ -303,8 +299,10 @@ fn expected_event_bus_json_keys() -> BTreeSet<String> {
         "event_handler_detect_file_paths".to_string(),
         "event_handler_slow_timeout".to_string(),
         "event_history".to_string(),
+        "event_result_ttl".to_string(),
         "event_slow_timeout".to_string(),
         "event_timeout".to_string(),
+        "event_ttl".to_string(),
         "handlers".to_string(),
         "handlers_by_key".to_string(),
         "id".to_string(),
@@ -320,6 +318,239 @@ fn base_event(event_type: &str, payload: Value) -> Arc<BaseEvent> {
         panic!("test payload must be an object");
     };
     BaseEvent::new(event_type, payload)
+}
+
+#[test]
+fn test_dispatching_completed_status_event_skips_handlers_and_normalizes_completion() {
+    let bus = EventBus::new(Some("AlreadyCompletedStatusBus".to_string()));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let handler_calls = calls.clone();
+    let handler = bus.on_raw_sync("AlreadyCompletedDispatchEvent", "handler", move |_event| {
+        handler_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(json!("ran"))
+    });
+    let started_handler_calls = calls.clone();
+    let started_handler = bus.on_raw_sync(
+        "AlreadyCompletedDispatchEvent",
+        "started_handler",
+        move |_event| {
+            started_handler_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(json!("started"))
+        },
+    );
+    let event = base_event("AlreadyCompletedDispatchEvent", json!({"label": "status"}));
+    let pending_result =
+        EventResult::new(event.inner.lock().event_id.clone(), handler.clone(), None);
+    let mut started_result = EventResult::new(
+        event.inner.lock().event_id.clone(),
+        started_handler.clone(),
+        None,
+    );
+    let started_at = "2025-01-02T03:04:04.000000000Z".to_string();
+    started_result.status = EventResultStatus::Started;
+    started_result.started_at = Some(started_at.clone());
+    let provided_started_at = "2025-01-02T03:04:03.000000000Z".to_string();
+    let provided_completed_at = "2025-01-02T03:04:05.000000000Z".to_string();
+    {
+        let mut inner = event.inner.lock();
+        inner
+            .event_results
+            .insert(handler.id.clone(), pending_result);
+        inner
+            .event_results
+            .insert(started_handler.id.clone(), started_result);
+        inner.event_status = EventStatus::Completed;
+        inner.event_started_at = Some(provided_started_at.clone());
+        inner.event_completed_at = Some(provided_completed_at.clone());
+    }
+
+    let dispatched = bus.emit_base(event.clone());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+    assert!(Arc::ptr_eq(&dispatched, &event));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let inner = event.inner.lock();
+    assert_eq!(inner.event_status, EventStatus::Completed);
+    assert_eq!(inner.event_started_at, Some(provided_started_at));
+    assert_eq!(inner.event_completed_at, Some(provided_completed_at));
+    assert_eq!(inner.event_path, vec![bus.label()]);
+    let result = inner
+        .event_results
+        .get(&handler.id)
+        .expect("pending event_result should be preserved");
+    assert_eq!(result.status, EventResultStatus::Pending);
+    assert!(result.completed_at.is_none());
+    assert!(result.result.is_none());
+    let started = inner
+        .event_results
+        .get(&started_handler.id)
+        .expect("started event_result should be preserved");
+    assert_eq!(started.status, EventResultStatus::Started);
+    assert_eq!(started.started_at, Some(started_at));
+    assert!(started.completed_at.is_none());
+    assert!(started.result.is_none());
+}
+
+#[test]
+fn test_dispatching_completed_at_event_skips_handlers_and_preserves_timestamp() {
+    let bus = EventBus::new(Some("AlreadyCompletedAtBus".to_string()));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let handler_calls = calls.clone();
+    let handler = bus.on_raw_sync(
+        "AlreadyCompletedAtDispatchEvent",
+        "handler",
+        move |_event| {
+            handler_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(json!("ran"))
+        },
+    );
+    let event = base_event(
+        "AlreadyCompletedAtDispatchEvent",
+        json!({"label": "timestamp"}),
+    );
+    let pending_result =
+        EventResult::new(event.inner.lock().event_id.clone(), handler.clone(), None);
+    let provided_started_at = "2025-01-02T03:04:04.000000000Z".to_string();
+    let provided_completed_at = "2025-01-02T03:04:05.000000000Z".to_string();
+    {
+        let mut inner = event.inner.lock();
+        inner
+            .event_results
+            .insert(handler.id.clone(), pending_result);
+        inner.event_started_at = Some(provided_started_at.clone());
+        inner.event_completed_at = Some(provided_completed_at.clone());
+    }
+
+    let dispatched = bus.emit_base(event.clone());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+    assert!(Arc::ptr_eq(&dispatched, &event));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let inner = event.inner.lock();
+    assert_eq!(inner.event_status, EventStatus::Completed);
+    assert_eq!(inner.event_started_at, Some(provided_started_at));
+    assert_eq!(inner.event_completed_at, Some(provided_completed_at));
+    assert_eq!(inner.event_path, vec![bus.label()]);
+    let result = inner
+        .event_results
+        .get(&handler.id)
+        .expect("pending event_result should be preserved");
+    assert_eq!(result.status, EventResultStatus::Pending);
+    assert!(result.completed_at.is_none());
+    assert!(result.result.is_none());
+    drop(inner);
+
+    let fallback_completed_at = "2025-01-02T03:04:07.000000000Z".to_string();
+    let fallback_event = base_event(
+        "AlreadyCompletedAtDispatchEvent",
+        json!({"label": "timestamp-fallback"}),
+    );
+    {
+        let mut inner = fallback_event.inner.lock();
+        inner.event_completed_at = Some(fallback_completed_at.clone());
+    }
+
+    bus.emit_base(fallback_event.clone());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let inner = fallback_event.inner.lock();
+    assert_eq!(inner.event_status, EventStatus::Completed);
+    assert_eq!(inner.event_started_at, Some(fallback_completed_at.clone()));
+    assert_eq!(inner.event_completed_at, Some(fallback_completed_at));
+    assert_eq!(inner.event_path, vec![bus.label()]);
+}
+
+#[test]
+fn test_dispatching_completed_events_with_prior_paths_records_bus_once_and_skips_handlers() {
+    let bus = EventBus::new(Some("AlreadyCompletedPriorPathBus".to_string()));
+    let other_bus_label = "PriorCompletedBus#1234".to_string();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let handler_calls = calls.clone();
+    bus.on_raw_sync("AlreadyCompletedPriorPathEvent", "handler", move |_event| {
+        handler_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(json!("ran"))
+    });
+
+    let prior_other_bus_event = base_event(
+        "AlreadyCompletedPriorPathEvent",
+        json!({"label": "prior-other-bus"}),
+    );
+    {
+        let mut inner = prior_other_bus_event.inner.lock();
+        inner.event_path = vec![other_bus_label.clone()];
+        inner.event_started_at = Some("2025-01-02T03:04:04.000000000Z".to_string());
+        inner.event_completed_at = Some("2025-01-02T03:04:06.000000000Z".to_string());
+        inner.event_status = EventStatus::Completed;
+    }
+
+    bus.emit_base(prior_other_bus_event.clone());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    {
+        let inner = prior_other_bus_event.inner.lock();
+        assert_eq!(inner.event_status, EventStatus::Completed);
+        assert_eq!(
+            inner.event_started_at.as_deref(),
+            Some("2025-01-02T03:04:04.000000000Z")
+        );
+        assert_eq!(
+            inner.event_completed_at.as_deref(),
+            Some("2025-01-02T03:04:06.000000000Z")
+        );
+        assert_eq!(inner.event_path, vec![other_bus_label.clone(), bus.label()]);
+    }
+
+    let provided_started_at = "2025-01-02T03:04:04.000000000Z".to_string();
+    let provided_completed_at = "2025-01-02T03:04:05.000000000Z".to_string();
+    let prior_same_bus_event = base_event(
+        "AlreadyCompletedPriorPathEvent",
+        json!({"label": "prior-same-bus"}),
+    );
+    {
+        let mut inner = prior_same_bus_event.inner.lock();
+        inner.event_path = vec![other_bus_label.clone(), bus.label()];
+        inner.event_started_at = Some(provided_started_at.clone());
+        inner.event_completed_at = Some(provided_completed_at.clone());
+    }
+
+    bus.emit_base(prior_same_bus_event.clone());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let inner = prior_same_bus_event.inner.lock();
+    assert_eq!(inner.event_status, EventStatus::Completed);
+    assert_eq!(inner.event_started_at, Some(provided_started_at));
+    assert_eq!(inner.event_completed_at, Some(provided_completed_at));
+    assert_eq!(inner.event_path, vec![other_bus_label, bus.label()]);
+    drop(inner);
+
+    let history_size = bus.event_history_size();
+    bus.emit_base(prior_same_bus_event.clone());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(bus.event_history_size(), history_size);
+    let redispatched_event_id = prior_same_bus_event.inner.lock().event_id.clone();
+    assert_eq!(
+        block_on(bus.filter_with_options(
+            "AlreadyCompletedPriorPathEvent",
+            FilterOptions {
+                where_predicate: Some(Arc::new(move |event| {
+                    event.inner.lock().event_id == redispatched_event_id
+                })),
+                ..FilterOptions::default()
+            },
+        ))
+        .len(),
+        1
+    );
+    let inner = prior_same_bus_event.inner.lock();
+    assert_eq!(
+        inner.event_path,
+        vec!["PriorCompletedBus#1234".to_string(), bus.label()]
+    );
 }
 
 #[test]
@@ -355,7 +586,7 @@ fn test_dispatch_returns_pending_event_with_correct_initial_state() {
         assert_eq!(inner.event_type, "TestEvent");
         assert!(!inner.event_id.is_empty());
         assert!(!inner.event_created_at.is_empty());
-        assert_eq!(inner.payload.get("data"), Some(&json!("hello")));
+        assert_eq!(inner.event_extra_payload.get("data"), Some(&json!("hello")));
         assert!(inner.event_path.contains(&bus.label()));
     }
 
@@ -529,8 +760,9 @@ fn test_destroy_is_immediate_and_rejects_late_handler_emits() {
     let bus = EventBus::new(Some("DestroyImmediateBus".to_string()));
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let (late_tx, late_rx) = std::sync::mpsc::channel();
-    let release_handler = Arc::new(AtomicBool::new(false));
-    let release_for_handler = release_handler.clone();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let release_rx = Arc::new(std::sync::Mutex::new(release_rx));
+    let release_for_handler = release_rx.clone();
     let bus_for_handler = bus.clone();
     bus.on_raw("UserActionEvent", "slow_handler", move |_event| {
         let started_tx = started_tx.clone();
@@ -539,9 +771,7 @@ fn test_destroy_is_immediate_and_rejects_late_handler_emits() {
         let bus = bus_for_handler.clone();
         async move {
             let _ = started_tx.send(());
-            while !release_handler.load(Ordering::SeqCst) {
-                thread::sleep(Duration::from_millis(1));
-            }
+            release_handler.lock().expect("release lock").recv().expect("release handler");
             let late_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 bus.emit(UserActionEvent {
                     ..Default::default()
@@ -577,7 +807,7 @@ fn test_destroy_is_immediate_and_rejects_late_handler_emits() {
     }));
     assert!(panic_message(outside_result).contains("has been destroyed"));
 
-    release_handler.store(true, Ordering::SeqCst);
+    release_tx.send(()).expect("release handler");
     assert!(late_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("late handler emit should report rejection"));
@@ -722,9 +952,9 @@ fn test_emit_and_result() {
         let inner = queued.inner.lock();
         assert_eq!(inner.event_type, "UserActionEvent");
         assert_eq!(inner.event_version, "0.0.1");
-        assert_eq!(inner.payload["action"], json!("login"));
+        assert_eq!(inner.event_extra_payload["action"], json!("login"));
         assert_eq!(
-            inner.payload["user_id"],
+            inner.event_extra_payload["user_id"],
             json!("50d357df-e68c-7111-8a6c-7018569514b0")
         );
         assert!(!inner.event_id.is_empty());
@@ -803,7 +1033,10 @@ fn test_write_ahead_log_captures_all_events() {
         let event = runtime.get(event_id).expect("history event");
         let inner = event.inner.lock();
         assert_eq!(inner.event_type, "UserActionEvent");
-        assert_eq!(inner.payload["action"], json!(format!("action_{index}")));
+        assert_eq!(
+            inner.event_extra_payload["action"],
+            json!(format!("action_{index}"))
+        );
         match inner.event_status {
             EventStatus::Completed => completed += 1,
             EventStatus::Pending => pending += 1,
@@ -846,7 +1079,7 @@ fn test_history_is_trimmed_to_max_history_size_completed_events_removed_first() 
         .event_history_ids()
         .iter()
         .map(|event_id| {
-            runtime[event_id].inner.lock().payload["seq"]
+            runtime[event_id].inner.lock().event_extra_payload["seq"]
                 .as_i64()
                 .expect("seq")
         })
@@ -1603,7 +1836,7 @@ fn test_handler_registration() {
             specific
                 .lock()
                 .expect("specific lock")
-                .push(event.inner.lock().payload["action"].clone());
+                .push(event.inner.lock().event_extra_payload["action"].clone());
             Ok(json!("user_handled"))
         }
     });
@@ -1754,7 +1987,10 @@ fn test_event_version_defaults_and_overrides() {
     let restored = BaseEvent::from_json_value(dispatched.to_json_value());
     assert_eq!(restored.inner.lock().event_version, "1.2.3");
     assert_eq!(restored.inner.lock().event_type, "VersionedEvent");
-    assert_eq!(restored.inner.lock().payload["data"], json!("queued"));
+    assert_eq!(
+        restored.inner.lock().event_extra_payload["data"],
+        json!("queued")
+    );
     bus.destroy();
 }
 
@@ -1966,7 +2202,7 @@ fn test_class_and_instance_method_handlers() {
             Ok(json!({
                 "processor": self.name,
                 "value": self.value,
-                "action": event.inner.lock().payload["action"].clone(),
+                "action": event.inner.lock().event_extra_payload["action"].clone(),
             }))
         }
 
@@ -1975,7 +2211,7 @@ fn test_class_and_instance_method_handlers() {
             Ok(json!({
                 "processor": self.name,
                 "value": self.value * 2,
-                "action": event.inner.lock().payload["action"].clone(),
+                "action": event.inner.lock().event_extra_payload["action"].clone(),
             }))
         }
 
@@ -2166,7 +2402,7 @@ fn assert_mixed_delay_handlers_maintain_order() {
         let collected_orders = collected_for_handler.clone();
         let handler_start_orders = starts_for_handler.clone();
         async move {
-            let order = event.inner.lock().payload["order"]
+            let order = event.inner.lock().event_extra_payload["order"]
                 .as_i64()
                 .expect("order payload");
             handler_start_orders
@@ -2237,7 +2473,7 @@ fn test_event_with_complex_data() {
     let _ = block_on(event.wait());
 
     assert_eq!(
-        event.inner.lock().payload["details"]["nested"]["list"][2]["inner"],
+        event.inner.lock().event_extra_payload["details"]["nested"]["list"][2]["inner"],
         json!("value")
     );
     bus.destroy();
@@ -2343,7 +2579,7 @@ fn test_manual_dict_merge() {
     let bus = EventBus::new(Some("ManualDictMergeBus".to_string()));
 
     bus.on_raw("GetConfig", "config_base", |_event| async move {
-        Ok(json!({"debug": false, "port": 8080, "name": "base"}))
+        Ok(json!({"debug": false, "port": 5797, "name": "base"}))
     });
     bus.on_raw("GetConfig", "config_override", |_event| async move {
         Ok(json!({"debug": true, "timeout": 30, "name": "override"}))
@@ -2365,7 +2601,7 @@ fn test_manual_dict_merge() {
     }
     assert_eq!(
         Value::Object(merged),
-        json!({"debug": true, "port": 8080, "timeout": 30, "name": "override"})
+        json!({"debug": true, "port": 5797, "timeout": 30, "name": "override"})
     );
 
     bus.on_raw("BadConfig", "bad_handler", |_event| async move {
@@ -3051,7 +3287,7 @@ fn test_unreferenced_eventbus_can_be_garbage_collected_not_retained_by_all_insta
     };
 
     assert!(
-        wait_for_eventbus_weak_refs_to_drop(&[weak_ref]),
+        eventbus_weak_refs_dropped(&[weak_ref]),
         "all_instances must not hold a strong reference to an unreferenced bus"
     );
     assert!(
@@ -3089,7 +3325,7 @@ fn test_unreferenced_buses_with_event_history_are_garbage_collected_without_dest
     }
 
     assert!(
-        wait_for_eventbus_weak_refs_to_drop(&refs),
+        eventbus_weak_refs_dropped(&refs),
         "all_instances must not retain buses after their last Arc handle is dropped"
     );
     assert!(
@@ -3132,7 +3368,7 @@ fn test_reset_creates_a_fresh_pending_event_for_cross_bus_dispatch() {
     assert_eq!(forwarded.inner.lock().event_status, EventStatus::Completed);
     assert_eq!(forwarded.inner.lock().event_results.len(), 1);
     let event_path = forwarded.inner.lock().event_path.clone();
-    assert!(event_path.iter().any(|path| path.starts_with("ResetBusA#")));
+    assert!(!event_path.iter().any(|path| path.starts_with("ResetBusA#")));
     assert!(event_path.iter().any(|path| path.starts_with("ResetBusB#")));
     bus_a.destroy();
     bus_b.destroy();
@@ -3278,6 +3514,8 @@ fn test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() {
             event_handler_completion: EventHandlerCompletionMode::First,
             event_timeout: Some(0.0),
             event_slow_timeout: Some(34.0),
+            event_ttl: None,
+            event_result_ttl: None,
             event_handler_slow_timeout: Some(12.0),
             event_handler_detect_file_paths: false,
             max_handler_recursion_depth: 2,
@@ -3606,7 +3844,7 @@ fn test_custom_handler_recursion_depth_allows_deeper_nested_handlers() {
         let bus = bus_for_handler.clone();
         let seen_levels = seen_for_handler.clone();
         async move {
-            let payload = event.inner.lock().payload.clone();
+            let payload = event.inner.lock().event_extra_payload.clone();
             let level = payload["level"].as_i64().expect("level");
             let max_level = payload["max_level"].as_i64().expect("max_level");
             seen_levels.lock().expect("seen levels lock").push(level);
@@ -3641,7 +3879,7 @@ fn test_default_handler_recursion_depth_still_catches_runaway_loops() {
     bus.on_raw("RecursiveEvent", "recursive_handler", move |event| {
         let bus = bus_for_handler.clone();
         async move {
-            let payload = event.inner.lock().payload.clone();
+            let payload = event.inner.lock().event_extra_payload.clone();
             let level = payload["level"].as_i64().expect("level");
             let max_level = payload["max_level"].as_i64().expect("max_level");
             if level < max_level {
@@ -3874,7 +4112,7 @@ mod folded_test_eventbus_edge_cases {
                 let label = event
                     .inner
                     .lock()
-                    .payload
+                    .event_extra_payload
                     .get("label")
                     .and_then(|value| value.as_str())
                     .expect("label")
@@ -3889,7 +4127,7 @@ mod folded_test_eventbus_edge_cases {
                 let label = event
                     .inner
                     .lock()
-                    .payload
+                    .event_extra_payload
                     .get("label")
                     .and_then(|value| value.as_str())
                     .expect("label")
@@ -3929,7 +4167,7 @@ mod folded_test_eventbus_edge_cases {
             &["hello".to_string()]
         );
         let event_path = forwarded.event_path.read();
-        assert!(event_path
+        assert!(!event_path
             .iter()
             .any(|path| path.starts_with("ResetCoverageBusA#")));
         assert!(event_path
@@ -4099,7 +4337,6 @@ mod folded_test_eventbus_name_conflict_gc {
             Arc, Barrier, Weak,
         },
         thread,
-        time::{Duration, Instant},
     };
 
     use abxbus::event_bus::{EventBus, EventBusOptions};
@@ -4117,11 +4354,7 @@ mod folded_test_eventbus_name_conflict_gc {
     }
 
     fn assert_eventually_collected(weak_ref: &Weak<EventBus>) {
-        let deadline = Instant::now() + Duration::from_millis(500);
-        while weak_ref.upgrade().is_some() && Instant::now() < deadline {
-            thread::yield_now();
-            thread::sleep(Duration::from_millis(1));
-        }
+        EventBus::all_instances_len();
         assert!(weak_ref.upgrade().is_none());
     }
 

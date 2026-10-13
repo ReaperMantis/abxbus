@@ -64,6 +64,10 @@ func baseEventFromAny(value any) (*BaseEvent, error) {
 		if applyEventConfigField(event, field.Name, fieldValue) {
 			continue
 		}
+		if field.Name == "EventExtraPayload" {
+			mergeEventExtraPayload(payload, fieldValue)
+			continue
+		}
 		payload[name] = normalizeReflectValue(fieldValue)
 	}
 	return event, nil
@@ -87,6 +91,10 @@ func applyEventConfigField(event *BaseEvent, name string, value reflect.Value) b
 		event.EventHandlerTimeout = reflectOptionalFloat(value)
 	case "EventHandlerSlowTimeout":
 		event.EventHandlerSlowTimeout = reflectOptionalFloat(value)
+	case "EventTTL":
+		event.EventTTL = reflectOptionalFloat(value)
+	case "EventResultTTL":
+		event.EventResultTTL = reflectOptionalFloat(value)
 	case "EventConcurrency":
 		if str := reflectString(value); str != "" {
 			event.EventConcurrency = EventConcurrencyMode(str)
@@ -114,27 +122,29 @@ func applyEventConfigField(event *BaseEvent, name string, value reflect.Value) b
 }
 
 func reflectOptionalFloat(value reflect.Value) *float64 {
+	wasPointer := false
 	for value.Kind() == reflect.Pointer {
 		if value.IsNil() {
 			return nil
 		}
+		wasPointer = true
 		value = value.Elem()
 	}
 	switch value.Kind() {
 	case reflect.Float32, reflect.Float64:
-		if value.Float() == 0 {
+		if value.Float() == 0 && !wasPointer {
 			return nil
 		}
 		f := value.Convert(reflect.TypeOf(float64(0))).Float()
 		return &f
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		if value.Int() == 0 {
+		if value.Int() == 0 && !wasPointer {
 			return nil
 		}
 		f := float64(value.Int())
 		return &f
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		if value.Uint() == 0 {
+		if value.Uint() == 0 && !wasPointer {
 			return nil
 		}
 		f := float64(value.Uint())
@@ -276,6 +286,9 @@ func newEventFromPayload[T any](eventType string, payload T) (*BaseEvent, error)
 			return nil, err
 		}
 	}
+	delete(normalized, "event_extra_payload")
+	delete(normalized, "EventExtraPayload")
+	mergeEventExtraPayload(normalized, reflect.ValueOf(payload))
 	return NewBaseEvent(eventType, normalized), nil
 }
 
@@ -313,12 +326,104 @@ func EventPayloadAs[T any](event *BaseEvent) (T, error) {
 	if event == nil {
 		return payload, fmt.Errorf("event is nil")
 	}
-	data, err := json.Marshal(event.Payload)
+	eventPayload, err := event.EventPayload()
+	if err != nil {
+		return payload, err
+	}
+	data, err := json.Marshal(eventPayload)
 	if err != nil {
 		return payload, err
 	}
 	err = json.Unmarshal(data, &payload)
-	return payload, err
+	if err != nil {
+		return payload, err
+	}
+	setEventExtraPayload(&payload, eventPayload)
+	return payload, nil
+}
+
+// EventExtraPayload is the in-memory field for forward-compatible typed events.
+// It stores flat JSON fields that were not declared statically on the Go type.
+// The map is always merged into the normal flat event JSON before dumping, and
+// split back out when loading; the key "event_extra_payload" is never emitted.
+func mergeEventExtraPayload(payload map[string]any, value reflect.Value) {
+	for value.IsValid() && (value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface) {
+		if value.IsNil() {
+			return
+		}
+		value = value.Elem()
+	}
+	if !value.IsValid() || value.Kind() != reflect.Struct {
+		return
+	}
+	field := value.FieldByName("EventExtraPayload")
+	if !field.IsValid() || field.Kind() != reflect.Map || field.Type().Key().Kind() != reflect.String {
+		return
+	}
+	for _, key := range field.MapKeys() {
+		payload[key.String()] = normalizeReflectValue(field.MapIndex(key))
+	}
+}
+
+func setEventExtraPayload(target any, payload map[string]any) {
+	value := reflect.ValueOf(target)
+	if value.Kind() != reflect.Pointer || value.IsNil() {
+		return
+	}
+	value = value.Elem()
+	for value.IsValid() && value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			value.Set(reflect.New(value.Type().Elem()))
+		}
+		value = value.Elem()
+	}
+	if !value.IsValid() || value.Kind() != reflect.Struct {
+		return
+	}
+	field := value.FieldByName("EventExtraPayload")
+	if !field.IsValid() || !field.CanSet() || field.Kind() != reflect.Map || field.Type().Key().Kind() != reflect.String {
+		return
+	}
+	extra := reflect.MakeMap(field.Type())
+	for key, item := range payload {
+		if typedPayloadJSONFieldNames(value.Type())[key] {
+			continue
+		}
+		itemValue := reflect.ValueOf(item)
+		if !itemValue.IsValid() {
+			itemValue = reflect.Zero(field.Type().Elem())
+		} else if !itemValue.Type().AssignableTo(field.Type().Elem()) {
+			if !itemValue.Type().ConvertibleTo(field.Type().Elem()) {
+				continue
+			}
+			itemValue = itemValue.Convert(field.Type().Elem())
+		}
+		extra.SetMapIndex(reflect.ValueOf(key), itemValue)
+	}
+	if extra.Len() > 0 {
+		field.Set(extra)
+	}
+}
+
+func typedPayloadJSONFieldNames(t reflect.Type) map[string]bool {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	names := map[string]bool{}
+	if t.Kind() != reflect.Struct {
+		return names
+	}
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if field.PkgPath != "" || field.Anonymous || strings.HasPrefix(field.Name, "Event") || strings.HasPrefix(field.Name, "Model") {
+			continue
+		}
+		name, _, skip, _ := jsonschema.StructFieldJSONName(field)
+		if !skip {
+			names[name] = true
+		}
+	}
+	return names
 }
 
 func EventResultAs[T any](result any) (T, error) {

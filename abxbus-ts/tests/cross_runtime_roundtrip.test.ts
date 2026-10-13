@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
+import { once } from 'node:events'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { createConnection, createServer as createNetServer } from 'node:net'
+import { createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -36,6 +37,9 @@ const jsonShape = (value: unknown): unknown => {
 }
 
 const assertJsonShapeEqual = (actual: unknown, expected: unknown, context: string): void => {
+  // event_extra_payload is an in-memory escape hatch only; wire JSON must stay flat.
+  assert.equal(JSON.stringify(actual).includes('"event_extra_payload"'), false, `${context}: emitted event_extra_payload wrapper`)
+  assert.equal(JSON.stringify(expected).includes('"event_extra_payload"'), false, `${context}: fixture used event_extra_payload wrapper`)
   const containsShape = (actual_shape: unknown, expected_shape: unknown): boolean => {
     if (
       actual_shape !== null &&
@@ -235,7 +239,9 @@ const buildRoundtripCases = (): ResultSemanticsCase[] => {
     label: 'parent',
     event_path: ['TsBus#aaaa'],
     event_timeout: 12.5,
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 0, nested: ['kept', { event_type: 'TsPy_NumberResultEvent' }] },
+  } as never)
 
   const screenshot_event = ScreenshotResultEvent({
     target_id: '0c1ccf21-65c0-7390-8b64-9182e985740e',
@@ -243,53 +249,77 @@ const buildRoundtripCases = (): ResultSemanticsCase[] => {
     event_parent_id: number_event.event_id,
     event_path: ['TsBus#aaaa', 'PyBridge#bbbb'],
     event_timeout: 33.0,
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 11, nested: ['kept', { event_type: 'TsPy_ScreenshotResultEvent' }] },
+  } as never)
 
   const string_event = StringResultEvent({
     id: 'ecea6334-c939-7540-89b9-29b439c9a1f4',
     event_parent_id: number_event.event_id,
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 1, nested: ['kept', { event_type: 'TsPy_StringResultEvent' }] },
+  } as never)
   const bool_event = BooleanResultEvent({
     id: '87dc4d01-be2d-7057-834e-5faf35705400',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 2, nested: ['kept', { event_type: 'TsPy_BooleanResultEvent' }] },
+  } as never)
   const null_event = NullResultEvent({
     id: '5fc19a35-064c-7ec1-8d1a-4fb33f119abc',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 3, nested: ['kept', { event_type: 'TsPy_NullResultEvent' }] },
+  } as never)
   const string_ctor_event = StringCtorResultEvent({
     id: 'df54dc78-e988-75bc-8457-87d5bd2d7c4c',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 4, nested: ['kept', { event_type: 'TsPy_StringCtorResultEvent' }] },
+  } as never)
   const number_ctor_event = NumberCtorResultEvent({
     id: 'bfe9459c-c1a4-7906-8a13-c9855aac0001',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 5, nested: ['kept', { event_type: 'TsPy_NumberCtorResultEvent' }] },
+  } as never)
   const boolean_ctor_event = BooleanCtorResultEvent({
     id: 'f472d2e0-5815-7dad-8fb1-a9ce4315cd6e',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 6, nested: ['kept', { event_type: 'TsPy_BooleanCtorResultEvent' }] },
+  } as never)
   const array_event = ArrayResultEvent({
     id: 'e35d91b5-1ca9-7833-8b3d-1516e2896f1e',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 7, nested: ['kept', { event_type: 'TsPy_ArrayResultEvent' }] },
+  } as never)
   const array_ctor_event = ArrayCtorResultEvent({
     id: 'f21399dd-6162-7ac2-832d-a3870373278a',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 8, nested: ['kept', { event_type: 'TsPy_ArrayCtorResultEvent' }] },
+  } as never)
   const record_event = RecordResultEvent({
     id: 'ba1a8735-0955-737f-8b4d-7337d2169a3c',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 9, nested: ['kept', { event_type: 'TsPy_RecordResultEvent' }] },
+  } as never)
   const object_ctor_event = ObjectCtorResultEvent({
     id: '2aa37066-45e8-7f65-8ada-7c30ac8982d5',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 10, nested: ['kept', { event_type: 'TsPy_ObjectCtorResultEvent' }] },
+  } as never)
   const recursive_event = RecursiveNodeEvent({
     marker: 'recursive',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 12, nested: ['kept', { event_type: 'TsPy_RecursiveNodeEvent' }] },
+  } as never)
 
   return [
     {
@@ -1217,8 +1247,6 @@ const getFreePort = async (): Promise<number> =>
     })
   })
 
-const sleep = async (ms: number): Promise<void> => await new Promise((resolve) => setTimeout(resolve, ms))
-
 const importDynamicModule = async (module_name: string): Promise<any> => {
   const dynamic_import = Function('module_name', 'return import(module_name)') as (module_name: string) => Promise<unknown>
   return dynamic_import(module_name) as Promise<any>
@@ -1270,48 +1298,43 @@ const normalizeRoundtripPayload = (payload: Record<string, unknown>): Record<str
   return normalized
 }
 
-const waitForPort = async (port: number, timeout_ms = 30000): Promise<void> => {
-  const started = Date.now()
-  while (Date.now() - started < timeout_ms) {
-    const ok = await new Promise<boolean>((resolve) => {
-      const socket = createConnection({ host: '127.0.0.1', port }, () => {
-        socket.end()
-        resolve(true)
-      })
-      socket.once('error', () => resolve(false))
-    })
-    if (ok) return
-    await sleep(50)
-  }
-  throw new Error(`port did not open in time: ${port}`)
-}
-
-const waitForPath = async (
-  path: string,
-  worker: ChildProcess,
-  stdout_log: { value: string },
-  stderr_log: { value: string },
-  timeout_ms = 30000
-): Promise<void> => {
-  const started = Date.now()
-  while (Date.now() - started < timeout_ms) {
-    if (existsSync(path)) return
-    if (worker.exitCode !== null) {
-      throw new Error(`worker exited early (${worker.exitCode})\nstdout:\n${stdout_log.value}\nstderr:\n${stderr_log.value}`)
+const waitForProcessLine = async (proc: ChildProcess, predicate: (line: string) => boolean): Promise<string> =>
+  await new Promise<string>((resolve, reject) => {
+    let stdout_buffer = ''
+    let stderr_buffer = ''
+    const inspect = (stream: 'stdout' | 'stderr', chunk: unknown): void => {
+      const previous = stream === 'stdout' ? stdout_buffer : stderr_buffer
+      const lines = `${previous}${String(chunk)}`.split('\n')
+      if (stream === 'stdout') stdout_buffer = lines.pop() ?? ''
+      else stderr_buffer = lines.pop() ?? ''
+      for (const line of lines) {
+        if (predicate(line)) {
+          cleanup()
+          resolve(line)
+          return
+        }
+      }
     }
-    await sleep(50)
-  }
-  throw new Error(`path did not appear in time: ${path}`)
-}
+    const on_stdout = (chunk: unknown): void => inspect('stdout', chunk)
+    const on_stderr = (chunk: unknown): void => inspect('stderr', chunk)
+    const on_exit = (code: number | null): void => {
+      cleanup()
+      reject(new Error(`process exited before readiness/result (${code})\nstdout:\n${stdout_buffer}\nstderr:\n${stderr_buffer}`))
+    }
+    const cleanup = (): void => {
+      proc.stdout?.off('data', on_stdout)
+      proc.stderr?.off('data', on_stderr)
+      proc.off('exit', on_exit)
+    }
+    proc.stdout?.on('data', on_stdout)
+    proc.stderr?.on('data', on_stderr)
+    proc.once('exit', on_exit)
+  })
 
 const stopProcess = async (proc: ChildProcess): Promise<void> => {
   if (proc.exitCode !== null) return
   proc.kill('SIGTERM')
-  await sleep(250)
-  if (proc.exitCode === null) {
-    proc.kill('SIGKILL')
-    await sleep(250)
-  }
+  await once(proc, 'exit')
 }
 
 const runChecked = (cmd: string, args: string[], cwd?: string): void => {
@@ -1358,91 +1381,75 @@ const waitForEvent = async (event: Promise<void>, timeout_ms: number): Promise<v
 }
 
 const measureWarmLatencyMs = async (kind: string, config: Record<string, string>): Promise<number> => {
-  const attempts = 3
-  let last_error: unknown
+  const sender = makeSenderBridge(kind, config, true)
+  const receiver = makeListenerBridge(kind, config, true)
 
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const sender = makeSenderBridge(kind, config, true)
-    const receiver = makeListenerBridge(kind, config, true)
+  const run_suffix = Math.random().toString(36).slice(2, 10)
+  const warmup_prefix = `warmup_${run_suffix}_`
+  const measured_prefix = `measured_${run_suffix}_`
+  const warmup_count_target = 5
+  const measured_count_target = 1000
 
-    const run_suffix = Math.random().toString(36).slice(2, 10)
-    const warmup_prefix = `warmup_${run_suffix}_`
-    const measured_prefix = `measured_${run_suffix}_`
-    const warmup_count_target = 5
-    const measured_count_target = 1000
+  let warmup_seen_count = 0
+  let measured_seen_count = 0
+  let warmup_resolve: (() => void) | null = null
+  let measured_resolve: (() => void) | null = null
+  const warmup_seen = new Promise<void>((resolve) => {
+    warmup_resolve = resolve
+  })
+  const measured_seen = new Promise<void>((resolve) => {
+    measured_resolve = resolve
+  })
 
-    let warmup_seen_count = 0
-    let measured_seen_count = 0
-    let warmup_resolve: (() => void) | null = null
-    let measured_resolve: (() => void) | null = null
-    const warmup_seen = new Promise<void>((resolve) => {
-      warmup_resolve = resolve
-    })
-    const measured_seen = new Promise<void>((resolve) => {
-      measured_resolve = resolve
-    })
-
-    const onEvent = (event: { label?: unknown }): void => {
-      const label = typeof event.label === 'string' ? event.label : ''
-      if (label.startsWith(warmup_prefix)) {
-        warmup_seen_count += 1
-        if (warmup_seen_count >= warmup_count_target) {
-          warmup_resolve?.()
-          warmup_resolve = null
-        }
-        return
+  const onEvent = (event: { label?: unknown }): void => {
+    const label = typeof event.label === 'string' ? event.label : ''
+    if (label.startsWith(warmup_prefix)) {
+      warmup_seen_count += 1
+      if (warmup_seen_count >= warmup_count_target) {
+        warmup_resolve?.()
+        warmup_resolve = null
       }
-      if (label.startsWith(measured_prefix)) {
-        measured_seen_count += 1
-        if (measured_seen_count >= measured_count_target) {
-          measured_resolve?.()
-          measured_resolve = null
-        }
+      return
+    }
+    if (label.startsWith(measured_prefix)) {
+      measured_seen_count += 1
+      if (measured_seen_count >= measured_count_target) {
+        measured_resolve?.()
+        measured_resolve = null
       }
     }
-
-    const emitBatch = async (prefix: string, count: number): Promise<void> => {
-      for (let i = 0; i < count; i += 1) {
-        await sender.emit(IPCPingEvent({ label: `${prefix}${i}` }))
-      }
-    }
-
-    try {
-      await sender.start()
-      await receiver.start()
-      receiver.on('IPCPingEvent', onEvent)
-      await sleep(100)
-
-      await emitBatch(warmup_prefix, warmup_count_target)
-      await waitForEvent(warmup_seen, 60000)
-
-      const start_ms = performance.now()
-      await emitBatch(measured_prefix, measured_count_target)
-      await waitForEvent(measured_seen, 120000)
-      return (performance.now() - start_ms) / measured_count_target
-    } catch (error: unknown) {
-      last_error = error
-    } finally {
-      await sender.close()
-      await receiver.close()
-    }
-
-    await sleep(200)
   }
 
-  throw new Error(`bridge latency measurement timed out after ${attempts} attempts: ${kind} (${String(last_error)})`)
+  const emitBatch = async (prefix: string, count: number): Promise<void> => {
+    for (let i = 0; i < count; i += 1) {
+      await sender.emit(IPCPingEvent({ label: `${prefix}${i}` }))
+    }
+  }
+
+  try {
+    await sender.start()
+    await receiver.start()
+    receiver.on('IPCPingEvent', onEvent)
+
+    await emitBatch(warmup_prefix, warmup_count_target)
+    await waitForEvent(warmup_seen, 60000)
+
+    const start_ms = performance.now()
+    await emitBatch(measured_prefix, measured_count_target)
+    await waitForEvent(measured_seen, 120000)
+    return (performance.now() - start_ms) / measured_count_target
+  } finally {
+    await sender.close()
+    await receiver.close()
+  }
 }
 
 const assertRoundtrip = async (kind: string, config: Record<string, string>): Promise<void> => {
   const temp_dir = makeTempDir(`abxbus-bridge-${kind}`)
-  const ready_path = join(temp_dir, 'worker.ready')
-  const output_path = join(temp_dir, 'received.json')
   const config_path = join(temp_dir, 'worker_config.json')
   const worker_payload = {
     ...config,
     kind,
-    ready_path,
-    output_path,
   }
   writeFileSync(config_path, JSON.stringify(worker_payload), 'utf8')
 
@@ -1452,24 +1459,16 @@ const assertRoundtrip = async (kind: string, config: Record<string, string>): Pr
     cwd: tests_dir,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  const worker_stdout = { value: '' }
-  const worker_stderr = { value: '' }
-  worker.stdout?.on('data', (chunk) => {
-    worker_stdout.value += String(chunk)
-  })
-  worker.stderr?.on('data', (chunk) => {
-    worker_stderr.value += String(chunk)
-  })
-
   try {
-    await waitForPath(ready_path, worker, worker_stdout, worker_stderr)
+    const ready_line = await waitForProcessLine(worker, (line) => line === '{"ready":true}')
+    assert.deepEqual(JSON.parse(ready_line), { ready: true })
     if (kind === 'postgres') {
       await sender.start()
     }
     const outbound = IPCPingEvent({ label: `${kind}_ok` })
+    const received_line = waitForProcessLine(worker, (line) => line.startsWith('{"event":'))
     await sender.emit(outbound)
-    await waitForPath(output_path, worker, worker_stdout, worker_stderr)
-    const received_payload = JSON.parse(readFileSync(output_path, 'utf8')) as Record<string, unknown>
+    const received_payload = (JSON.parse(await received_line) as { event: Record<string, unknown> }).event
     assert.deepEqual(normalizeRoundtripPayload(received_payload), normalizeRoundtripPayload(outbound.toJSON() as Record<string, unknown>))
   } finally {
     await sender.close()
@@ -1559,7 +1558,7 @@ test('RedisEventBridge roundtrip between processes', async () => {
     { stdio: ['ignore', 'pipe', 'pipe'] }
   )
   try {
-    await waitForPort(port)
+    await waitForProcessLine(redis, (line) => line.includes('Ready to accept connections'))
     const config = { url: `redis://127.0.0.1:${port}/1/abxbus_events` }
     await assertRoundtrip('redis', config)
     const latency_ms = await measureWarmLatencyMs('redis', config)
@@ -1574,7 +1573,7 @@ test('NATSEventBridge roundtrip between processes', async () => {
   const port = await getFreePort()
   const nats = spawn('nats-server', ['-a', '127.0.0.1', '-p', String(port)], { stdio: ['ignore', 'pipe', 'pipe'] })
   try {
-    await waitForPort(port)
+    await waitForProcessLine(nats, (line) => line.includes('Server is ready'))
     const config = { server: `nats://127.0.0.1:${port}`, subject: 'abxbus_events' }
     await assertRoundtrip('nats', config)
     const latency_ms = await measureWarmLatencyMs('nats', config)
@@ -1610,7 +1609,7 @@ test('PostgresEventBridge roundtrip between processes', async () => {
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   try {
-    await waitForPort(port)
+    await waitForProcessLine(postgres, (line) => line.includes('database system is ready to accept connections'))
     const config = { url: `postgresql://postgres@127.0.0.1:${port}/postgres/abxbus_events` }
     await assertRoundtrip('postgres', config)
 

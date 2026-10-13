@@ -3,7 +3,6 @@ use std::{
     collections::HashMap,
     env, fs,
     process::Command,
-    sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -88,7 +87,7 @@ fn test_queue_jump() {
             let value = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("idx")
                 .and_then(serde_json::Value::as_i64)
                 .expect("idx payload");
@@ -161,7 +160,7 @@ fn test_emit_with_queue_jump_preempts_queued_sibling_on_same_bus() {
             let value = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("idx")
                 .and_then(serde_json::Value::as_i64)
                 .expect("idx payload");
@@ -272,7 +271,7 @@ fn test_bus_serial_fifo_order_preserved_per_bus_with_interleaving() {
             let order = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("order")
                 .and_then(serde_json::Value::as_i64)
                 .expect("order payload");
@@ -288,7 +287,7 @@ fn test_bus_serial_fifo_order_preserved_per_bus_with_interleaving() {
             let order = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("order")
                 .and_then(serde_json::Value::as_i64)
                 .expect("order payload");
@@ -357,7 +356,7 @@ fn test_event_concurrency_global_serial_allows_only_one_inflight_across_buses() 
             let max_in_flight = max_in_flight.clone();
             let starts = starts.clone();
             async move {
-                let payload = event.inner.lock().payload.clone();
+                let payload = event.inner.lock().event_extra_payload.clone();
                 let source = payload
                     .get("source")
                     .and_then(serde_json::Value::as_str)
@@ -537,11 +536,12 @@ fn test_wait_waits_in_queue_order_inside_handler_without_queue_jump() {
     let bus_for_parent = bus.clone();
     let order = Arc::new(Mutex::new(Vec::new()));
     let child_ref = Arc::new(Mutex::new(None::<Arc<abxbus::base_event::BaseEvent>>));
-    let sibling_started = Arc::new(AtomicBool::new(false));
+    let (sibling_started_tx, sibling_started_rx) = std::sync::mpsc::channel();
+    let sibling_started_rx = Arc::new(Mutex::new(sibling_started_rx));
 
     let order_for_parent = order.clone();
     let child_ref_for_parent = child_ref.clone();
-    let sibling_started_for_parent = sibling_started.clone();
+    let sibling_started_for_parent = sibling_started_rx.clone();
     bus.on_raw("parent", "parent_handler", move |_event| {
         let bus = bus_for_parent.clone();
         let order = order_for_parent.clone();
@@ -555,10 +555,7 @@ fn test_wait_waits_in_queue_order_inside_handler_without_queue_jump() {
             bus.emit(SiblingEvent {
                 ..Default::default()
             });
-            let deadline = std::time::Instant::now() + Duration::from_millis(500);
-            while !sibling_started.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(1));
-            }
+            sibling_started.lock().expect("sibling start lock").recv().expect("sibling started");
             let child = bus.emit_child(WorkEvent {
                 ..Default::default()
             });
@@ -573,7 +570,7 @@ fn test_wait_waits_in_queue_order_inside_handler_without_queue_jump() {
     });
 
     let order_for_sibling = order.clone();
-    let sibling_started_for_sibling = sibling_started.clone();
+    let sibling_started_for_sibling = sibling_started_tx.clone();
     bus.on_raw("sibling", "sibling_handler", move |_event| {
         let order = order_for_sibling.clone();
         let sibling_started = sibling_started_for_sibling.clone();
@@ -582,7 +579,7 @@ fn test_wait_waits_in_queue_order_inside_handler_without_queue_jump() {
                 .lock()
                 .expect("order lock")
                 .push("sibling_start".to_string());
-            sibling_started.store(true, Ordering::SeqCst);
+            sibling_started.send(()).expect("sibling started");
             thread::sleep(Duration::from_millis(5));
             order
                 .lock()
@@ -1773,7 +1770,7 @@ fn test_fifo_forwarded_events_preserve_order_on_target_bus_bus_serial() {
             let order = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("order")
                 .and_then(serde_json::Value::as_i64)
                 .expect("order payload");
@@ -1793,7 +1790,7 @@ fn test_fifo_forwarded_events_preserve_order_on_target_bus_bus_serial() {
             let (order, in_flight_on_bus_b) = {
                 let inner = event.inner.lock();
                 let order = inner
-                    .payload
+                    .event_extra_payload
                     .get("order")
                     .and_then(serde_json::Value::as_i64)
                     .expect("order payload");
@@ -1838,7 +1835,7 @@ fn test_fifo_forwarded_events_preserve_order_on_target_bus_bus_serial() {
                 .expect("history event")
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("order")
                 .and_then(serde_json::Value::as_i64)
                 .expect("order payload")
@@ -1960,7 +1957,7 @@ fn test_fifo_forwarded_events_preserve_order_across_chained_buses_bus_serial() {
             let order = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("order")
                 .and_then(serde_json::Value::as_i64)
                 .expect("order payload");

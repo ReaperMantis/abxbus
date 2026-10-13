@@ -21,21 +21,25 @@ description: Use this when working on typed events, event bus execution, event h
 
 ## Development Setup
 
-<!--pytest.mark.skip(reason="pytest invocation")-->
 ```bash
-uv sync
+uv sync --dev --all-extras --no-extra tachyon
+pnpm --dir abxbus-ts install --frozen-lockfile
 uv run pytest --collect-only -q
 ```
 
 ## User-Facing Setup
 
 ```bash
-uv add abxbus
+project_dir="$(mktemp -d)"
+trap 'rm -rf "$project_dir"' EXIT
+uv init --bare "$project_dir"
+uv add --project "$project_dir" abxbus
 ```
 
 ## Basic Usage
 
 ```python
+import asyncio
 from abxbus import EventBus, BaseEvent
 
 class UserEvent(BaseEvent[str]):
@@ -44,18 +48,26 @@ class UserEvent(BaseEvent[str]):
 async def handle_user(event: UserEvent) -> str:
     return event.username
 
-bus = EventBus()
-bus.on(UserEvent, handle_user)
-result = await bus.emit(UserEvent(username="alice")).result()
+async def main():
+    bus = EventBus()
+    bus.on(UserEvent, handle_user)
+    event = await bus.emit(UserEvent(username="alice")).now()
+    assert await event.event_result() == "alice"
+    await bus.destroy()
+
+asyncio.run(main())
 ```
 
 ## Verification
 
-<!--pytest.mark.skip(reason="pytest invocation")-->
 ```bash
-uv run pytest tests -q
-uv run pytest tests/test_event_bus.py -q
-uv run prek run --all-files
+uv run pytest -n auto --dist loadfile tests -q
+uv run pytest tests/test_eventbus.py -q
+env -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 uv run prek run --all-files
 ```
+
+Dedicated CI jobs run `tests/test_cross_runtime_roundtrip.py` with all required
+native tools and bridge services, and `tests/test_eventbus_performance.py` with
+isolated performance thresholds.
 
 Keep event ordering and replay behavior deterministic.
